@@ -52,6 +52,8 @@
 
 const API_BASE = 'https://app.detrack.com/api/v2';
 const MAX_CANDIDATES = 50;
+const UPSTREAM_TIMEOUT_MS = 6000;   // cap for any single Detrack call
+const TOTAL_BUDGET_MS = 12000;      // cap for all steps together
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -120,20 +122,32 @@ function identifierMatches(job, supplied) {
  *   error   5xx, or a body that would not parse
  *   network the request never completed
  */
-async function detrackGet(env, path, params) {
+async function detrackGet(env, path, params, deadline) {
   const url = new URL(API_BASE + path);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
+
+  // Detrack is hosted in Singapore and a slow reply must not leave the customer
+  // watching a spinner. Every call is capped, and all the steps share one
+  // budget, so the whole lookup answers within TOTAL_BUDGET_MS whatever happens.
+  const left = deadline - Date.now();
+  if (left <= 0) return { kind: 'network', status: 0 };
+
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), Math.min(UPSTREAM_TIMEOUT_MS, left));
 
   let res;
   try {
     res = await fetch(url.toString(), {
       method: 'GET',
       headers: { 'X-API-KEY': env.DETRACK_API_KEY, Accept: 'application/json' },
+      signal: stop.signal,
     });
   } catch {
     return { kind: 'network', status: 0 };
+  } finally {
+    clearTimeout(timer);
   }
 
   if (res.status === 200) {
@@ -153,33 +167,84 @@ async function detrackGet(env, path, params) {
 
 /* ------------------------------------------------------------------- response */
 
-/** Only the fields the recipient needs. Nothing else is passed through. */
+/**
+ * Detrack's raw status keys are not customer-facing wording. `status` is kept
+ * as-is because the page colours the badge from it; `status_label` is what the
+ * customer actually reads.
+ */
+/* Detrack's documented `status` values. These are the only ones it emits —
+ * there is no "in_progress", "at_destination" or "cancelled". */
+const STATUS_LABELS = {
+  info_recv: 'Booked',
+  in_transit: 'On its way to us',
+  dispatched: 'Scheduled',
+  completed: 'Delivered',
+  completed_partial: 'Delivered — part order',
+  failed: 'Delivery attempted',
+  on_hold: 'On hold',
+  return: 'Returning to us',
+};
+
+/* The documented `milestones[].status` values. */
+const MILESTONE_LABELS = {
+  info_recv: 'Booked',
+  dispatched: 'Scheduled',
+  out_for_delivery: 'Out for delivery',
+  head_to_delivery: 'Driver on the way',
+  head_to_pick_up: 'Driver on the way to collect',
+  completed: 'Delivered',
+  completed_partial: 'Delivered — part order',
+  failed: 'Delivery attempted',
+  on_hold: 'On hold',
+  return: 'Returning to us',
+};
+
+/** Last resort: turn any unknown key into something readable rather than blank. */
+const humanise = (key) =>
+  key ? String(key).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '';
+
+const label = (map, key) => map[key] || humanise(key);
+
+/**
+ * Only the fields the recipient needs. Nothing else is passed through.
+ *
+ * The key names here are a CONTRACT with renderJob() in index.html — it reads
+ * job.service, job.status_label, job.received_at and milestone.label. Renaming
+ * anything below silently blanks a row on the page, so change both or neither.
+ */
 function publicView(job) {
   const photos = [];
   for (let i = 1; i <= 10; i++) {
     const p = job['photo_' + i + '_file_url'];
     if (p) photos.push(p);
   }
+
+  const status = job.primary_job_status || job.status || null;
+  const milestones = Array.isArray(job.milestones) ? job.milestones : [];
+
   return {
-    do_number: job.do_number || null,
+    do_number: job.do_number || job.tracking_number || job.detrack_number || null,
     tracking_number: job.tracking_number || null,
-    type: job.type || null,
-    status: job.primary_job_status || job.status || null,
+    service: job.type || null,
+    status,
+    // Detrack's own tracking_status is already the customer-facing wording and
+    // it says more than `status` does — it separates "Scheduled" from "Out for
+    // delivery", which `status` alone (both `dispatched`) cannot.
+    status_label: job.tracking_status || label(STATUS_LABELS, status),
     date: job.date || null,
     time_window: [job.time_window_from, job.time_window_to].filter(Boolean).join(' – ') || null,
     deliver_to: job.deliver_to_collect_from || null,
     address: job.address || null,
     received_by: job.received_by_sent_by || null,
-    pod_at: job.pod_at || null,
+    received_at: job.pod_at || job.pod_time || null,
+    reason: job.reason || null,
     signature: job.signature_file_url || null,
     photos,
-    milestones: Array.isArray(job.milestones)
-      ? job.milestones.map((m) => ({
-          status: m.status || null,
-          at: m.created_at || m.assign_time || null,
-          note: m.reason || null,
-        }))
-      : [],
+    milestones: milestones.map((m) => ({
+      label: label(MILESTONE_LABELS, m.status),
+      at: m.created_at || m.assign_time || null,
+      reason: m.reason || null,
+    })),
   };
 }
 
@@ -253,62 +318,4 @@ export async function onRequest(context) {
   // ---------------------------------------------------------------- the lookup
   let job = null;
   let worst = null;   // the most serious upstream problem seen along the way
-
-  const note = (name, r, extra) => {
-    steps.push({ step: name, status: r.status, result: r.kind, ...(extra || {}) });
-    // auth beats rate beats error/network; a later success still wins overall
-    const rank = { network: 1, error: 2, rate: 3, auth: 4 };
-    if (rank[r.kind] && (!worst || rank[r.kind] > rank[worst])) worst = r.kind;
-  };
-
-  // step 1 — exact DO number
-  let r = await detrackGet(env, '/dn/jobs/show/', { do_number: ref });
-  note('show', r);
-  if (r.kind === 'ok' && r.body && r.body.data && !Array.isArray(r.body.data)) {
-    job = r.body.data;
-  }
-
-  // step 2 — the documented query filter (covers tracking_number)
-  if (!job) {
-    r = await detrackGet(env, '/dn/jobs', { query: ref, limit: MAX_CANDIDATES });
-    const list = r.kind === 'ok' && r.body && Array.isArray(r.body.data) ? r.body.data : [];
-    note('query_reference', r, { candidates: list.length });
-    job = list.find((j) => jobHasReference(j, ref)) || null;
-  }
-
-  // step 3 — the customer's own jobs, matched locally (the only route to
-  // detrack_number). Requires the second factor to be an email address.
-  if (!job && isEmail(who)) {
-    r = await detrackGet(env, '/dn/jobs', { query: who, limit: MAX_CANDIDATES });
-    const list = r.kind === 'ok' && r.body && Array.isArray(r.body.data) ? r.body.data : [];
-    note('query_email', r, { candidates: list.length });
-    job = list.find((j) => jobHasReference(j, ref)) || null;
-  }
-
-  // ------------------------------------------------------------- what happened
-  if (!job) {
-    // Only report a fault if one actually occurred. A clean set of misses means
-    // the shipment genuinely is not there.
-    if (worst === 'auth') {
-      // Configuration, not an outage. Deliberately vague to the visitor; the
-      // real cause is in `_debug` and in the Cloudflare log.
-      console.error('[track] Detrack rejected the API key', JSON.stringify(steps));
-      return json(withDebug({ error: 'not_configured',
-                              message: 'Tracking is not configured yet.' }), 503);
-    }
-    if (worst === 'rate') {
-      return json(withDebug({ error: 'rate_limited',
-                              message: 'Too many lookups. Try again in a moment.' }), 429);
-    }
-    if (worst === 'error' || worst === 'network') {
-      console.error('[track] Detrack unavailable', JSON.stringify(steps));
-      return json(withDebug({ error: 'upstream_unavailable',
-                              message: 'Tracking is temporarily unavailable.' }), 502);
-    }
-    return notFound();
-  }
-
-  if (requireId && !identifierMatches(job, who)) return notFound();
-
-  return json(withDebug({ data: publicView(job) }));
-}
+  const deadline = Date.now() + 
