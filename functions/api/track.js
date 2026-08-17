@@ -318,4 +318,64 @@ export async function onRequest(context) {
   // ---------------------------------------------------------------- the lookup
   let job = null;
   let worst = null;   // the most serious upstream problem seen along the way
-  const deadline = Date.now() + 
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
+
+  const note = (name, r, extra) => {
+    steps.push({ step: name, status: r.status, result: r.kind, ...(extra || {}) });
+    // auth beats rate beats error/network; a later success still wins overall
+    const rank = { network: 1, error: 2, rate: 3, auth: 4 };
+    if (rank[r.kind] && (!worst || rank[r.kind] > rank[worst])) worst = r.kind;
+  };
+
+  // step 1 — exact DO number
+  let r = await detrackGet(env, '/dn/jobs/show/', { do_number: ref }, deadline);
+  note('show', r);
+  if (r.kind === 'ok' && r.body && r.body.data && !Array.isArray(r.body.data)) {
+    job = r.body.data;
+  }
+
+  // step 2 — the documented query filter (covers tracking_number)
+  if (!job) {
+    r = await detrackGet(env, '/dn/jobs', { query: ref, limit: MAX_CANDIDATES }, deadline);
+    const list = r.kind === 'ok' && r.body && Array.isArray(r.body.data) ? r.body.data : [];
+    note('query_reference', r, { candidates: list.length });
+    job = list.find((j) => jobHasReference(j, ref)) || null;
+  }
+
+  // step 3 — the customer's own jobs, matched locally (the only route to
+  // detrack_number). Requires the second factor to be an email address.
+  if (!job && isEmail(who)) {
+    r = await detrackGet(env, '/dn/jobs', { query: who, limit: MAX_CANDIDATES }, deadline);
+    const list = r.kind === 'ok' && r.body && Array.isArray(r.body.data) ? r.body.data : [];
+    note('query_email', r, { candidates: list.length });
+    job = list.find((j) => jobHasReference(j, ref)) || null;
+  }
+
+  // ------------------------------------------------------------- what happened
+  if (!job) {
+    // Only report a fault if one actually occurred. A clean set of misses means
+    // the shipment genuinely is not there.
+    if (worst === 'auth') {
+      // Configuration, not an outage. Deliberately vague to the visitor; the
+      // real cause is in `_debug` and in the Cloudflare log.
+      console.error('[track] Detrack rejected the API key', JSON.stringify(steps));
+      return json(withDebug({ error: 'not_configured',
+                              message: 'Tracking is not configured yet.' }), 503);
+    }
+    if (worst === 'rate') {
+      return json(withDebug({ error: 'rate_limited',
+                              message: 'Too many lookups. Try again in a moment.' }), 429);
+    }
+    if (worst === 'error' || worst === 'network') {
+      console.error('[track] Detrack unavailable', JSON.stringify(steps));
+      return json(withDebug({ error: 'upstream_unavailable',
+                              message: 'Tracking is temporarily unavailable.' }), 502);
+    }
+    return notFound();
+  }
+
+  if (requireId && !identifierMatches(job, who)) return notFound();
+
+  // The page reads `job`, not `data`. Do not rename this key.
+  return json(withDebug({ job: publicView(job) }));
+}
