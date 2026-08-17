@@ -1,32 +1,37 @@
 /**
- * /api/track — Detrack lookup proxy for Cloudflare Pages
+ * PWD / Cloudflare Pages / Detrack tracking proxy
  *
- * Cloudflare secret required:
+ * Customer may enter ANY of these Detrack identifiers:
+ *   1. detrack_number   e.g. DET6411206273
+ *   2. tracking_number e.g. T1234567
+ *   3. do_number       e.g. DO123
+ *
+ * Existing PWD index.html can remain unchanged. It sends:
+ *   { do_number: "<whatever customer entered>", identifier: "<email or phone>" }
+ *
+ * Required Cloudflare secret:
  *   DETRACK_API_KEY
- *
- * Optional:
- *   TRACK_REQUIRE_IDENTIFIER = "false"
- *   (default is true)
- *
- * This version is designed to match the existing PWD index.html tracking UI.
  */
 
 const DETRACK_SHOW = 'https://app.detrack.com/api/v2/dn/jobs/show/';
 
-const json = (body, status = 200) =>
-  new Response(JSON.stringify(body), {
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store'
     }
   });
+}
 
-const notFound = () =>
-  json({ error: 'not_found', message: 'No shipment matches those details.' }, 404);
+function norm(v) {
+  return String(v == null ? '' : v).trim().toLowerCase();
+}
 
-const norm = (v) => String(v == null ? '' : v).trim().toLowerCase();
-const digits = (v) => String(v == null ? '' : v).replace(/\D/g, '');
+function digits(v) {
+  return String(v == null ? '' : v).replace(/\D/g, '');
+}
 
 function splitEmails(v) {
   return String(v == null ? '' : v)
@@ -36,8 +41,7 @@ function splitEmails(v) {
 }
 
 function identifierMatches(job, supplied) {
-  const given = norm(supplied);
-  if (!given) return false;
+  const suppliedText = norm(supplied);
 
   const emails = [
     ...splitEmails(job.notify_email),
@@ -46,10 +50,10 @@ function identifierMatches(job, supplied) {
     ...splitEmails(job.customer_email)
   ];
 
-  if (emails.includes(given)) return true;
+  if (suppliedText && emails.includes(suppliedText)) return true;
 
-  const givenDigits = digits(supplied);
-  if (givenDigits.length >= 7) {
+  const suppliedDigits = digits(supplied);
+  if (suppliedDigits.length >= 7) {
     const phones = [
       job.phone_number,
       job.contact_phone,
@@ -57,8 +61,10 @@ function identifierMatches(job, supplied) {
       job.sender_phone_number
     ].filter(Boolean).map(digits);
 
-    const tail = (s) => s.slice(-10);
-    if (phones.some((p) => p && tail(p) === tail(givenDigits))) return true;
+    const last10 = (s) => s.slice(-10);
+    if (phones.some((p) => p && last10(p) === last10(suppliedDigits))) {
+      return true;
+    }
   }
 
   return false;
@@ -84,6 +90,7 @@ function statusLabel(job) {
     return: 'Return',
     cancelled: 'Cancelled'
   };
+
   return labels[s] || s || 'Status unavailable';
 }
 
@@ -104,16 +111,16 @@ function milestoneLabel(status) {
     on_hold: 'On hold',
     return: 'Return'
   };
+
   return labels[s] || String(status || 'Update');
 }
 
-/* Convert Detrack's job into exactly the field names the existing
-   PWD index.html renderJob() function expects. */
-function publicView(job, requestedNumber) {
+function publicView(job, enteredNumber) {
   const photos = [];
+
   for (let i = 1; i <= 10; i++) {
-    const p = job['photo_' + i + '_file_url'];
-    if (p) photos.push(p);
+    const photo = job['photo_' + i + '_file_url'];
+    if (photo) photos.push(photo);
   }
 
   const milestones = Array.isArray(job.milestones)
@@ -125,14 +132,16 @@ function publicView(job, requestedNumber) {
     : [];
 
   return {
-    // Show the number the customer entered when possible.
+    // Keep what the customer entered visible on the PWD result.
     do_number:
-      requestedNumber ||
-      job.tracking_number ||
+      enteredNumber ||
       job.detrack_number ||
+      job.tracking_number ||
       job.do_number ||
       null,
 
+    detrack_number: job.detrack_number || null,
+    tracking_number: job.tracking_number || null,
     service: job.service_type || job.job_type || job.type || null,
     deliver_to: job.deliver_to_collect_from || job.company_name || null,
     address: job.address || null,
@@ -157,38 +166,86 @@ function publicView(job, requestedNumber) {
   };
 }
 
-async function readParams(request) {
-  const url = new URL(request.url);
-
+async function readRequest(request) {
   if (request.method === 'GET') {
+    const u = new URL(request.url);
     return {
-      do_number: url.searchParams.get('do_number') || url.searchParams.get('tracking'),
-      identifier: url.searchParams.get('identifier')
+      number:
+        u.searchParams.get('tracking') ||
+        u.searchParams.get('number') ||
+        u.searchParams.get('do_number') ||
+        '',
+      identifier: u.searchParams.get('identifier') || ''
     };
-  }
-
-  const ctype = request.headers.get('content-type') || '';
-
-  if (ctype.includes('application/json')) {
-    try {
-      return await request.json();
-    } catch {
-      return {};
-    }
   }
 
   try {
+    const contentType = request.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+      const body = await request.json();
+
+      return {
+        // Current PWD index.html sends do_number.
+        // Accept extra names too for future compatibility.
+        number:
+          body.number ||
+          body.tracking ||
+          body.detrack_number ||
+          body.tracking_number ||
+          body.do_number ||
+          '',
+        identifier: body.identifier || ''
+      };
+    }
+
     const form = await request.formData();
+
     return {
-      do_number: form.get('do_number'),
-      identifier: form.get('identifier')
+      number:
+        form.get('number') ||
+        form.get('tracking') ||
+        form.get('detrack_number') ||
+        form.get('tracking_number') ||
+        form.get('do_number') ||
+        '',
+      identifier: form.get('identifier') || ''
     };
   } catch {
-    return {};
+    return { number: '', identifier: '' };
   }
 }
 
-async function detrackPost(apiKey, body) {
+function extractJob(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  // Common API shapes.
+  if (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+    return payload.data;
+  }
+
+  if (payload.job && typeof payload.job === 'object') {
+    return payload.job;
+  }
+
+  if (payload.result && typeof payload.result === 'object') {
+    return payload.result;
+  }
+
+  // Direct job response.
+  if (
+    payload.detrack_number ||
+    payload.tracking_number ||
+    payload.do_number ||
+    payload.id
+  ) {
+    return payload;
+  }
+
+  return null;
+}
+
+async function detrackLookup(apiKey, lookupBody) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
 
@@ -200,7 +257,7 @@ async function detrackPost(apiKey, body) {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(lookupBody),
       signal: controller.signal
     });
   } finally {
@@ -208,19 +265,24 @@ async function detrackPost(apiKey, body) {
   }
 }
 
-function extractJob(payload) {
-  if (!payload || typeof payload !== 'object') return null;
-
-  // Common Detrack/API response shapes.
-  if (payload.data && !Array.isArray(payload.data)) return payload.data;
-  if (payload.job && typeof payload.job === 'object') return payload.job;
-
-  // If Detrack returned the job object directly.
-  if (payload.do_number || payload.detrack_number || payload.tracking_number) {
-    return payload;
+function buildAttempts(number) {
+  /*
+   * Try ALL THREE identifier types.
+   * Order only improves speed; all three are attempted if needed.
+   */
+  if (/^DET[A-Z0-9]+$/i.test(number)) {
+    return [
+      { type: 'detrack_number', body: { detrack_number: number } },
+      { type: 'tracking_number', body: { tracking_number: number } },
+      { type: 'do_number', body: { do_number: number } }
+    ];
   }
 
-  return null;
+  return [
+    { type: 'tracking_number', body: { tracking_number: number } },
+    { type: 'do_number', body: { do_number: number } },
+    { type: 'detrack_number', body: { detrack_number: number } }
+  ];
 }
 
 export async function onRequest(context) {
@@ -239,26 +301,33 @@ export async function onRequest(context) {
 
   if (!env.DETRACK_API_KEY) {
     return json(
-      { error: 'not_configured', message: 'Tracking is not configured yet.' },
+      {
+        error: 'not_configured',
+        message: 'Tracking is not configured yet.'
+      },
       503
     );
   }
 
-  const { do_number, identifier } = await readParams(request);
-  const tracking = String(do_number || '').trim();
+  const input = await readRequest(request);
+  const number = String(input.number || '').trim();
+  const identifier = String(input.identifier || '').trim();
 
   if (
-    !tracking ||
-    tracking.length > 64 ||
-    !/^[A-Za-z0-9._\-\/]+$/.test(tracking)
+    !number ||
+    number.length > 64 ||
+    !/^[A-Za-z0-9._\-\/]+$/.test(number)
   ) {
-    return notFound();
+    return json(
+      {
+        error: 'not_found',
+        message: 'No shipment matches those details.'
+      },
+      404
+    );
   }
 
-  const requireId =
-    String(env.TRACK_REQUIRE_IDENTIFIER || 'true').toLowerCase() !== 'false';
-
-  if (requireId && !String(identifier || '').trim()) {
+  if (!identifier) {
     return json(
       {
         error: 'identifier_required',
@@ -268,39 +337,23 @@ export async function onRequest(context) {
     );
   }
 
-  /*
-   * Detrack distinguishes:
-   * - do_number
-   * - tracking_number
-   * - detrack_number (usually starts DET...)
-   *
-   * Try the most likely field first, then safe fallbacks.
-   */
-  const attempts = [];
+  const attempts = buildAttempts(number);
+  let sawAuthorizationError = false;
 
-  if (/^DET[A-Za-z0-9]+$/i.test(tracking)) {
-    attempts.push({ detrack_number: tracking });
-    attempts.push({ do_number: tracking });
-  } else {
-    attempts.push({ do_number: tracking });
-    attempts.push({ tracking_number: tracking });
-  }
-
-  let lastStatus = 404;
-
-  for (const lookup of attempts) {
-    let upstream;
+  for (const attempt of attempts) {
+    let response;
 
     try {
-      upstream = await detrackPost(env.DETRACK_API_KEY, lookup);
+      response = await detrackLookup(env.DETRACK_API_KEY, attempt.body);
     } catch (err) {
-      const timeout =
-        err && (err.name === 'AbortError' || String(err).includes('aborted'));
+      const timedOut =
+        err &&
+        (err.name === 'AbortError' || String(err).toLowerCase().includes('abort'));
 
       return json(
         {
-          error: timeout ? 'upstream_timeout' : 'upstream_unavailable',
-          message: timeout
+          error: timedOut ? 'upstream_timeout' : 'upstream_unavailable',
+          message: timedOut
             ? 'Detrack took too long to respond.'
             : 'Tracking is temporarily unavailable.'
         },
@@ -308,39 +361,35 @@ export async function onRequest(context) {
       );
     }
 
-    lastStatus = upstream.status;
+    if (response.status === 401 || response.status === 403) {
+      sawAuthorizationError = true;
+      continue;
+    }
 
-    if (upstream.status === 429) {
+    if (response.status === 429) {
       return json(
-        { error: 'rate_limited', message: 'Too many lookups. Try again in a moment.' },
+        {
+          error: 'rate_limited',
+          message: 'Too many tracking lookups. Please try again shortly.'
+        },
         429
       );
     }
 
-    // Try another lookup field when Detrack says not found.
-    if (upstream.status === 404) continue;
+    // Not found / unsupported lookup field -> try the next identifier type.
+    if (response.status === 404 || response.status === 400 || response.status === 422) {
+      continue;
+    }
 
-    if (!upstream.ok) {
-      let detail = '';
-      try {
-        detail = (await upstream.text()).slice(0, 300);
-      } catch {}
-
-      // Keep the API key private, but return a useful server-side error code.
-      return json(
-        {
-          error: 'upstream_error',
-          upstream_status: upstream.status,
-          message: 'Detrack rejected the tracking lookup.',
-          detail
-        },
-        502
-      );
+    if (!response.ok) {
+      // Other Detrack error: keep trying the remaining identifier types.
+      continue;
     }
 
     let payload;
+
     try {
-      payload = await upstream.json();
+      payload = await response.json();
     } catch {
       continue;
     }
@@ -348,18 +397,53 @@ export async function onRequest(context) {
     const job = extractJob(payload);
     if (!job) continue;
 
-    if (requireId && !identifierMatches(job, identifier)) {
-      return notFound();
+    /*
+     * Verify that the job we got actually matches what was entered.
+     * This prevents an upstream fallback/default response from exposing
+     * an unrelated shipment.
+     */
+    const numberMatches =
+      norm(job.detrack_number) === norm(number) ||
+      norm(job.tracking_number) === norm(number) ||
+      norm(job.do_number) === norm(number);
+
+    if (!numberMatches) continue;
+
+    if (!identifierMatches(job, identifier)) {
+      return json(
+        {
+          error: 'not_found',
+          message: 'No shipment matches those details.'
+        },
+        404
+      );
     }
 
-    // IMPORTANT: existing index.html expects response.job
-    return json({ job: publicView(job, tracking) }, 200);
+    // Existing PWD index.html expects: out.data.job
+    return json(
+      {
+        job: publicView(job, number),
+        matched_by: attempt.type
+      },
+      200
+    );
   }
 
-  if (lastStatus === 429) {
-    return json({ error: 'rate_limited' }, 429);
+  if (sawAuthorizationError) {
+    return json(
+      {
+        error: 'detrack_authorization',
+        message: 'Detrack rejected the API credentials.'
+      },
+      502
+    );
   }
 
-  return notFound();
+  return json(
+    {
+      error: 'not_found',
+      message: 'No shipment matches those details.'
+    },
+    404
+  );
 }
-
