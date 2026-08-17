@@ -1,19 +1,36 @@
 /**
- * PWD / Cloudflare Pages / Detrack tracking proxy
+ * Premium Wine Delivery — Detrack tracking proxy
+ * FINAL VERIFIED VERSION — 2026-08-17
  *
- * Customer may enter ANY of these Detrack identifiers:
- *   1. detrack_number   e.g. DET6411206273
- *   2. tracking_number e.g. T1234567
- *   3. do_number       e.g. DO123
+ * Location in GitHub:
+ *   functions/api/track.js
  *
- * Existing PWD index.html can remain unchanged. It sends:
- *   { do_number: "<whatever customer entered>", identifier: "<email or phone>" }
- *
- * Required Cloudflare secret:
+ * Required Cloudflare Pages secret:
  *   DETRACK_API_KEY
+ *
+ * Existing PWD index.html does NOT need to change.
+ *
+ * Customer can enter ANY ONE of these Detrack identifiers:
+ *   - detrack_number   e.g. DET6411206273
+ *   - tracking_number  e.g. T1234567
+ *   - do_number        e.g. DO123
+ *
+ * Customer must also enter EITHER:
+ *   - the job's notify_email, OR
+ *   - the job's phone_number
+ *
+ * Detrack V2 lookup method used here:
+ *   GET https://app.detrack.com/api/v2/jobs
+ *   query=<entered tracking value>
+ *   X-API-KEY: <secret>
+ *
+ * The Detrack V2 official client documents "query" as a loose search
+ * across all job attributes. This function then requires an exact match
+ * against detrack_number, tracking_number, or do_number before returning
+ * any shipment information.
  */
 
-const DETRACK_SHOW = 'https://app.detrack.com/api/v2/dn/jobs/show/';
+const DETRACK_JOBS_URL = 'https://app.detrack.com/api/v2/jobs';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -25,55 +42,80 @@ function json(body, status = 200) {
   });
 }
 
-function norm(v) {
-  return String(v == null ? '' : v).trim().toLowerCase();
+function normalizeText(value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
 }
 
-function digits(v) {
-  return String(v == null ? '' : v).replace(/\D/g, '');
+function digitsOnly(value) {
+  return String(value == null ? '' : value).replace(/\D/g, '');
 }
 
-function splitEmails(v) {
-  return String(v == null ? '' : v)
+function splitNotifyEmails(value) {
+  return String(value == null ? '' : value)
     .split(/[;,]/)
-    .map(norm)
+    .map(v => v.trim().toLowerCase())
     .filter(Boolean);
 }
 
-function identifierMatches(job, supplied) {
-  const suppliedText = norm(supplied);
+function trackingNumberMatches(job, entered) {
+  const wanted = normalizeText(entered);
 
-  const emails = [
-    ...splitEmails(job.notify_email),
-    ...splitEmails(job.email),
-    ...splitEmails(job.deliver_to_collect_from_email),
-    ...splitEmails(job.customer_email)
-  ];
+  return (
+    normalizeText(job.detrack_number) === wanted ||
+    normalizeText(job.tracking_number) === wanted ||
+    normalizeText(job.do_number) === wanted
+  );
+}
 
-  if (suppliedText && emails.includes(suppliedText)) return true;
+function emailMatches(job, enteredEmail) {
+  const wanted = normalizeText(enteredEmail);
+  if (!wanted) return false;
 
-  const suppliedDigits = digits(supplied);
-  if (suppliedDigits.length >= 7) {
-    const phones = [
-      job.phone_number,
-      job.contact_phone,
-      job.notify_phone,
-      job.sender_phone_number
-    ].filter(Boolean).map(digits);
+  return splitNotifyEmails(job.notify_email).includes(wanted);
+}
 
-    const last10 = (s) => s.slice(-10);
-    if (phones.some((p) => p && last10(p) === last10(suppliedDigits))) {
-      return true;
-    }
+function phoneMatches(job, enteredPhone) {
+  const wanted = digitsOnly(enteredPhone);
+  const stored = digitsOnly(job.phone_number);
+
+  if (!wanted || !stored) return false;
+
+  // Exact normalized match.
+  if (wanted === stored) return true;
+
+  // US numbers are often stored with or without country code / punctuation.
+  // Compare the final 10 digits when both sides contain at least 10 digits.
+  if (wanted.length >= 10 && stored.length >= 10) {
+    return wanted.slice(-10) === stored.slice(-10);
   }
 
   return false;
 }
 
-function statusLabel(job) {
-  if (job.tracking_status) return String(job.tracking_status);
+function identifierMatches(job, enteredIdentifier) {
+  const value = String(enteredIdentifier || '').trim();
+  if (!value) return false;
 
-  const s = String(job.primary_job_status || job.status || '').toLowerCase();
+  // If it looks like an email, verify ONLY against Detrack notify_email.
+  if (value.includes('@')) {
+    return emailMatches(job, value);
+  }
+
+  // Otherwise treat it as a phone number and verify ONLY against
+  // Detrack phone_number.
+  return phoneMatches(job, value);
+}
+
+function statusLabel(job) {
+  const raw = String(
+    job.tracking_status ||
+    job.status ||
+    job.primary_job_status ||
+    ''
+  ).trim();
+
+  const key = raw.toLowerCase().replace(/\s+/g, '_');
+
   const labels = {
     info_recv: 'Info Received',
     in_transit: 'In Transit',
@@ -91,11 +133,12 @@ function statusLabel(job) {
     cancelled: 'Cancelled'
   };
 
-  return labels[s] || s || 'Status unavailable';
+  return labels[key] || raw || 'Status unavailable';
 }
 
 function milestoneLabel(status) {
-  const s = String(status || '').toLowerCase();
+  const key = String(status || '').trim().toLowerCase();
+
   const labels = {
     info_recv: 'Delivery information received',
     in_transit: 'In transit',
@@ -112,52 +155,49 @@ function milestoneLabel(status) {
     return: 'Return'
   };
 
-  return labels[s] || String(status || 'Update');
+  return labels[key] || String(status || 'Update');
 }
 
-function publicView(job, enteredNumber) {
+function publicJob(job, enteredTrackingNumber) {
   const photos = [];
 
   for (let i = 1; i <= 10; i++) {
-    const photo = job['photo_' + i + '_file_url'];
-    if (photo) photos.push(photo);
+    const url = job['photo_' + i + '_file_url'];
+    if (url) photos.push(url);
   }
 
   const milestones = Array.isArray(job.milestones)
-    ? job.milestones.map((m) => ({
+    ? job.milestones.map(m => ({
         label: milestoneLabel(m.status),
-        at: m.created_at || m.pod_at || m.assign_time || null,
+        at: m.pod_at || m.created_at || null,
         reason: m.reason || null
       }))
     : [];
 
   return {
-    // Keep what the customer entered visible on the PWD result.
-    do_number:
-      enteredNumber ||
-      job.detrack_number ||
-      job.tracking_number ||
-      job.do_number ||
-      null,
+    // Existing PWD index.html displays job.do_number as "Tracking No."
+    // Show exactly what the customer entered.
+    do_number: enteredTrackingNumber,
 
-    detrack_number: job.detrack_number || null,
-    tracking_number: job.tracking_number || null,
     service: job.service_type || job.job_type || job.type || null,
-    deliver_to: job.deliver_to_collect_from || job.company_name || null,
+    deliver_to: job.deliver_to_collect_from || null,
     address: job.address || null,
 
-    status: job.primary_job_status || job.status || null,
+    status: job.status || job.primary_job_status || null,
     status_label: statusLabel(job),
 
     date: job.date || null,
     time_window:
-      job.time_window ||
-      [job.time_window_from, job.time_window_to].filter(Boolean).join(' – ') ||
       job.destination_time_window ||
-      null,
+      job.time_window ||
+      (
+        job.time_window_from || job.time_window_to
+          ? [job.time_window_from, job.time_window_to].filter(Boolean).join(' – ')
+          : null
+      ),
 
     received_by: job.received_by_sent_by || null,
-    received_at: job.pod_at || job.signed_at || null,
+    received_at: job.signed_at || job.pod_at || null,
     reason: job.reason || job.note || null,
 
     signature: job.signature_file_url || null,
@@ -166,123 +206,59 @@ function publicView(job, enteredNumber) {
   };
 }
 
-async function readRequest(request) {
-  if (request.method === 'GET') {
-    const u = new URL(request.url);
-    return {
-      number:
-        u.searchParams.get('tracking') ||
-        u.searchParams.get('number') ||
-        u.searchParams.get('do_number') ||
-        '',
-      identifier: u.searchParams.get('identifier') || ''
-    };
-  }
-
+async function readBody(request) {
   try {
     const contentType = request.headers.get('content-type') || '';
 
     if (contentType.includes('application/json')) {
-      const body = await request.json();
-
-      return {
-        // Current PWD index.html sends do_number.
-        // Accept extra names too for future compatibility.
-        number:
-          body.number ||
-          body.tracking ||
-          body.detrack_number ||
-          body.tracking_number ||
-          body.do_number ||
-          '',
-        identifier: body.identifier || ''
-      };
+      return await request.json();
     }
 
     const form = await request.formData();
-
     return {
-      number:
-        form.get('number') ||
-        form.get('tracking') ||
-        form.get('detrack_number') ||
-        form.get('tracking_number') ||
-        form.get('do_number') ||
-        '',
-      identifier: form.get('identifier') || ''
+      do_number: form.get('do_number'),
+      identifier: form.get('identifier')
     };
   } catch {
-    return { number: '', identifier: '' };
+    return {};
   }
 }
 
-function extractJob(payload) {
-  if (!payload || typeof payload !== 'object') return null;
+function extractJobs(payload) {
+  // Detrack V2 official client consumes response.data as the job list.
+  if (payload && Array.isArray(payload.data)) return payload.data;
 
-  // Common API shapes.
-  if (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
-    return payload.data;
-  }
+  // Defensive fallbacks, without trusting them unless exact tracking matches.
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.jobs)) return payload.jobs;
 
-  if (payload.job && typeof payload.job === 'object') {
-    return payload.job;
-  }
-
-  if (payload.result && typeof payload.result === 'object') {
-    return payload.result;
-  }
-
-  // Direct job response.
-  if (
-    payload.detrack_number ||
-    payload.tracking_number ||
-    payload.do_number ||
-    payload.id
-  ) {
-    return payload;
-  }
-
-  return null;
+  return [];
 }
 
-async function detrackLookup(apiKey, lookupBody) {
+async function fetchDetrackJobs(apiKey, trackingNumber) {
+  const url = new URL(DETRACK_JOBS_URL);
+
+  // Detrack V2 official client:
+  // GET /jobs?query=<loose search across all attributes>
+  url.searchParams.set('query', trackingNumber);
+  url.searchParams.set('page', '1');
+  url.searchParams.set('limit', '100');
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
 
   try {
-    return await fetch(DETRACK_SHOW, {
-      method: 'POST',
+    return await fetch(url.toString(), {
+      method: 'GET',
       headers: {
         'X-API-KEY': apiKey,
-        'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: JSON.stringify(lookupBody),
       signal: controller.signal
     });
   } finally {
     clearTimeout(timer);
   }
-}
-
-function buildAttempts(number) {
-  /*
-   * Try ALL THREE identifier types.
-   * Order only improves speed; all three are attempted if needed.
-   */
-  if (/^DET[A-Z0-9]+$/i.test(number)) {
-    return [
-      { type: 'detrack_number', body: { detrack_number: number } },
-      { type: 'tracking_number', body: { tracking_number: number } },
-      { type: 'do_number', body: { do_number: number } }
-    ];
-  }
-
-  return [
-    { type: 'tracking_number', body: { tracking_number: number } },
-    { type: 'do_number', body: { do_number: number } },
-    { type: 'detrack_number', body: { detrack_number: number } }
-  ];
 }
 
 export async function onRequest(context) {
@@ -291,12 +267,18 @@ export async function onRequest(context) {
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
-      headers: { Allow: 'GET, POST, OPTIONS' }
+      headers: {
+        'Allow': 'POST, OPTIONS',
+        'Cache-Control': 'no-store'
+      }
     });
   }
 
-  if (request.method !== 'GET' && request.method !== 'POST') {
-    return json({ error: 'method_not_allowed' }, 405);
+  if (request.method !== 'POST') {
+    return json(
+      { error: 'method_not_allowed', message: 'Method not allowed.' },
+      405
+    );
   }
 
   if (!env.DETRACK_API_KEY) {
@@ -309,14 +291,21 @@ export async function onRequest(context) {
     );
   }
 
-  const input = await readRequest(request);
-  const number = String(input.number || '').trim();
-  const identifier = String(input.identifier || '').trim();
+  const body = await readBody(request);
 
+  // Existing PWD index.html posts the tracking value under "do_number".
+  // We intentionally treat it as a generic tracking value because it may
+  // actually be a Detrack No., Tracking No., or D.O. No.
+  const trackingNumber = String(body.do_number || '').trim();
+  const identifier = String(body.identifier || '').trim();
+
+  // This also makes the existing index.html configuration probe using "!"
+  // stop here without contacting Detrack.
   if (
-    !number ||
-    number.length > 64 ||
-    !/^[A-Za-z0-9._\-\/]+$/.test(number)
+    !trackingNumber ||
+    trackingNumber.length < 3 ||
+    trackingNumber.length > 64 ||
+    !/^[A-Za-z0-9._\-\/]+$/.test(trackingNumber)
   ) {
     return json(
       {
@@ -337,113 +326,120 @@ export async function onRequest(context) {
     );
   }
 
-  const attempts = buildAttempts(number);
-  let sawAuthorizationError = false;
+  let upstream;
 
-  for (const attempt of attempts) {
-    let response;
-
-    try {
-      response = await detrackLookup(env.DETRACK_API_KEY, attempt.body);
-    } catch (err) {
-      const timedOut =
-        err &&
-        (err.name === 'AbortError' || String(err).toLowerCase().includes('abort'));
-
-      return json(
-        {
-          error: timedOut ? 'upstream_timeout' : 'upstream_unavailable',
-          message: timedOut
-            ? 'Detrack took too long to respond.'
-            : 'Tracking is temporarily unavailable.'
-        },
-        502
+  try {
+    upstream = await fetchDetrackJobs(env.DETRACK_API_KEY, trackingNumber);
+  } catch (err) {
+    const timedOut =
+      err &&
+      (
+        err.name === 'AbortError' ||
+        String(err).toLowerCase().includes('abort')
       );
-    }
 
-    if (response.status === 401 || response.status === 403) {
-      sawAuthorizationError = true;
-      continue;
-    }
-
-    if (response.status === 429) {
-      return json(
-        {
-          error: 'rate_limited',
-          message: 'Too many tracking lookups. Please try again shortly.'
-        },
-        429
-      );
-    }
-
-    // Not found / unsupported lookup field -> try the next identifier type.
-    if (response.status === 404 || response.status === 400 || response.status === 422) {
-      continue;
-    }
-
-    if (!response.ok) {
-      // Other Detrack error: keep trying the remaining identifier types.
-      continue;
-    }
-
-    let payload;
-
-    try {
-      payload = await response.json();
-    } catch {
-      continue;
-    }
-
-    const job = extractJob(payload);
-    if (!job) continue;
-
-    /*
-     * Verify that the job we got actually matches what was entered.
-     * This prevents an upstream fallback/default response from exposing
-     * an unrelated shipment.
-     */
-    const numberMatches =
-      norm(job.detrack_number) === norm(number) ||
-      norm(job.tracking_number) === norm(number) ||
-      norm(job.do_number) === norm(number);
-
-    if (!numberMatches) continue;
-
-    if (!identifierMatches(job, identifier)) {
-      return json(
-        {
-          error: 'not_found',
-          message: 'No shipment matches those details.'
-        },
-        404
-      );
-    }
-
-    // Existing PWD index.html expects: out.data.job
-    return json(
-      {
-        job: publicView(job, number),
-        matched_by: attempt.type
-      },
-      200
+    console.error(
+      timedOut
+        ? 'Detrack tracking request timed out'
+        : 'Detrack tracking request failed'
     );
-  }
 
-  if (sawAuthorizationError) {
     return json(
       {
-        error: 'detrack_authorization',
-        message: 'Detrack rejected the API credentials.'
+        error: timedOut ? 'upstream_timeout' : 'upstream_unavailable',
+        message: 'Tracking is temporarily unavailable.'
       },
       502
     );
   }
 
+  if (upstream.status === 401 || upstream.status === 403) {
+    console.error('Detrack API rejected credentials:', upstream.status);
+
+    return json(
+      {
+        error: 'detrack_authorization',
+        message: 'Tracking is temporarily unavailable.'
+      },
+      502
+    );
+  }
+
+  if (upstream.status === 429) {
+    return json(
+      {
+        error: 'rate_limited',
+        message: 'Too many tracking lookups. Please try again shortly.'
+      },
+      429
+    );
+  }
+
+  if (!upstream.ok) {
+    console.error('Detrack API returned status:', upstream.status);
+
+    return json(
+      {
+        error: 'upstream_error',
+        message: 'Tracking is temporarily unavailable.'
+      },
+      502
+    );
+  }
+
+  let payload;
+
+  try {
+    payload = await upstream.json();
+  } catch {
+    console.error('Detrack API returned invalid JSON');
+
+    return json(
+      {
+        error: 'upstream_invalid_response',
+        message: 'Tracking is temporarily unavailable.'
+      },
+      502
+    );
+  }
+
+  const jobs = extractJobs(payload);
+
+  // The API search is intentionally broad. Never trust a loose result.
+  // Only continue with a job whose one official tracking identifier exactly
+  // matches what the customer entered.
+  const job = jobs.find(candidate =>
+    trackingNumberMatches(candidate, trackingNumber)
+  );
+
+  if (!job) {
+    return json(
+      {
+        error: 'not_found',
+        message: 'No shipment matches those details.'
+      },
+      404
+    );
+  }
+
+  // Privacy/security check:
+  // Either notify_email OR phone_number must match the job.
+  if (!identifierMatches(job, identifier)) {
+    return json(
+      {
+        error: 'not_found',
+        message: 'No shipment matches those details.'
+      },
+      404
+    );
+  }
+
+  // Existing PWD index.html expects:
+  //   out.status === 200 && out.data.job
   return json(
     {
-      error: 'not_found',
-      message: 'No shipment matches those details.'
+      job: publicJob(job, trackingNumber)
     },
-    404
+    200
   );
 }
