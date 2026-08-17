@@ -1,0 +1,20 @@
+# Read top to bottom, first match wins. The catch-all MUST stay last.
+
+# --- old Squarespace URLs -------------------------------------------------
+/solutions/*            /wineries-trade/      301
+/pricing/*              /request-a-quote/     301
+/howitworks/*           /                     301
+/contact-1/*            /request-a-quote/     301
+/press/*                /about/               301
+
+# --- paths that changed between drafts ------------------------------------
+/storage-logistics/*       /dfw-logistics-hub/   301
+/warehousing-logistics/*   /dfw-logistics-hub/   301
+/service-area/*            /#service-areas       301
+
+# --- old tracking endpoint, kept for cached pages -------------------------
+/.netlify/functions/track   /api/track   200
+
+# --- single-page app: every route is rendered by index.html ---------------
+# real files and /api/* are matched before this line
+/*   /index.html   200
