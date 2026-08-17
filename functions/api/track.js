@@ -1,445 +1,314 @@
 /**
- * Premium Wine Delivery — Detrack tracking proxy
- * FINAL VERIFIED VERSION — 2026-08-17
+ * GET/POST /api/track  —  Detrack lookup proxy (Cloudflare Pages Function)
  *
- * Location in GitHub:
- *   functions/api/track.js
+ * The API key never reaches the browser. Set it in the Pages dashboard under
+ * Settings → Environment variables:
  *
- * Required Cloudflare Pages secret:
- *   DETRACK_API_KEY
+ *     DETRACK_API_KEY            required
+ *     TRACK_REQUIRE_IDENTIFIER   optional, defaults to "true"
+ *     TRACK_DEBUG_TOKEN          optional, see "Diagnosing" below
  *
- * Existing PWD index.html does NOT need to change.
+ * ---------------------------------------------------------------------------
+ * WHAT A CUSTOMER MAY TYPE
  *
- * Customer can enter ANY ONE of these Detrack identifiers:
- *   - detrack_number   e.g. DET6411206273
- *   - tracking_number  e.g. T1234567
- *   - do_number        e.g. DO123
+ * Detrack puts three different numbers on a job and customers do not know
+ * which one they are holding:
  *
- * Customer must also enter EITHER:
- *   - the job's notify_email, OR
- *   - the job's phone_number
+ *     do_number         our own delivery order number
+ *     tracking_number   the number in the tracking widget / notification
+ *     detrack_number    Detrack's own id, looks like DET6411206273
  *
- * Detrack V2 lookup method used here:
- *   GET https://app.detrack.com/api/v2/jobs
- *   query=<entered tracking value>
- *   X-API-KEY: <secret>
+ * Only ONE of these can be handed to /dn/jobs/show — do_number. That is why
+ * this function tries up to three lookups in order:
  *
- * The Detrack V2 official client documents "query" as a loose search
- * across all job attributes. This function then requires an exact match
- * against detrack_number, tracking_number, or do_number before returning
- * any shipment information.
+ *   1. GET /dn/jobs/show/?do_number=…   exact DO match. One call, most cases.
+ *   2. GET /dn/jobs?query=…             the documented `query` filter searches
+ *                                       "DO number, address, delivery to,
+ *                                       notify email, assign to, tracking
+ *                                       number and zone".
+ *   3. GET /dn/jobs?query=<email>       only when the second factor is an email
+ *                                       address. `query` searches notify email,
+ *                                       so this returns that customer's jobs and
+ *                                       we match detrack_number locally.
+ *
+ * Step 3 is the ONLY way to resolve a detrack_number: no documented filter
+ * searches that field. A DET… number supplied together with a phone number
+ * rather than an email therefore cannot be resolved — see README.
+ *
+ * Whichever step matches, the result is checked against the email or phone
+ * number on the order before anything is returned.
+ *
+ * ---------------------------------------------------------------------------
+ * DIAGNOSING
+ *
+ * Set TRACK_DEBUG_TOKEN to a long random string, then call
+ *
+ *     /api/track?do_number=…&identifier=…&debug=<that string>
+ *
+ * and the reply gains a `_debug` object listing each step and the HTTP status
+ * Detrack returned. Without the variable set, `debug` is ignored entirely and
+ * no diagnostic information is ever exposed.
  */
 
-const DETRACK_JOBS_URL = 'https://app.detrack.com/api/v2/jobs';
+const API_BASE = 'https://app.detrack.com/api/v2';
+const MAX_CANDIDATES = 50;
 
-function json(body, status = 200) {
-  return new Response(JSON.stringify(body), {
+const json = (body, status = 200) =>
+  new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store'
-    }
+      'Cache-Control': 'no-store',
+    },
   });
+
+const norm = (v) => String(v == null ? '' : v).trim().toLowerCase();
+const digits = (v) => String(v == null ? '' : v).replace(/\D/g, '');
+const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
+
+/* ------------------------------------------------------------------ matching */
+
+/** The three numbers a customer might be reading off a notification. */
+function jobHasReference(job, wanted) {
+  const w = norm(wanted);
+  if (!w) return false;
+  return [job.do_number, job.tracking_number, job.detrack_number]
+    .some((v) => v && norm(v) === w);
 }
 
-function normalizeText(value) {
-  return String(value == null ? '' : value).trim().toLowerCase();
-}
-
-function digitsOnly(value) {
-  return String(value == null ? '' : value).replace(/\D/g, '');
-}
-
-function splitNotifyEmails(value) {
-  return String(value == null ? '' : value)
-    .split(/[;,]/)
-    .map(v => v.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function trackingNumberMatches(job, entered) {
-  const wanted = normalizeText(entered);
-
-  return (
-    normalizeText(job.detrack_number) === wanted ||
-    normalizeText(job.tracking_number) === wanted ||
-    normalizeText(job.do_number) === wanted
-  );
-}
-
-function emailMatches(job, enteredEmail) {
-  const wanted = normalizeText(enteredEmail);
-  if (!wanted) return false;
-
-  return splitNotifyEmails(job.notify_email).includes(wanted);
-}
-
-function phoneMatches(job, enteredPhone) {
-  const wanted = digitsOnly(enteredPhone);
-  const stored = digitsOnly(job.phone_number);
-
-  if (!wanted || !stored) return false;
-
-  // Exact normalized match.
-  if (wanted === stored) return true;
-
-  // US numbers are often stored with or without country code / punctuation.
-  // Compare the final 10 digits when both sides contain at least 10 digits.
-  if (wanted.length >= 10 && stored.length >= 10) {
-    return wanted.slice(-10) === stored.slice(-10);
+/** notify_email may hold several addresses separated by "; " or ",". */
+function emailsOf(job) {
+  const out = [];
+  for (const field of [job.email, job.notify_email, job.deliver_to_collect_from_email]) {
+    if (!field) continue;
+    for (const part of String(field).split(/[;,]/)) {
+      const e = norm(part);
+      if (e) out.push(e);
+    }
   }
+  return out;
+}
 
+function identifierMatches(job, supplied) {
+  const given = norm(supplied);
+  if (!given) return false;
+
+  if (emailsOf(job).includes(given)) return true;
+
+  const givenDigits = digits(supplied);
+  if (givenDigits.length >= 7) {
+    // compare the last 10 digits so +1 and formatting differences do not matter
+    const tail = (s) => s.slice(-10);
+    const phones = [job.phone_number, job.contact_phone, job.notify_phone]
+      .filter(Boolean).map(digits);
+    if (phones.some((p) => p && tail(p) === tail(givenDigits))) return true;
+  }
   return false;
 }
 
-function identifierMatches(job, enteredIdentifier) {
-  const value = String(enteredIdentifier || '').trim();
-  if (!value) return false;
+/* ------------------------------------------------------------------- upstream */
 
-  // If it looks like an email, verify ONLY against Detrack notify_email.
-  if (value.includes('@')) {
-    return emailMatches(job, value);
+/**
+ * One call to Detrack, with the response classified rather than thrown away.
+ *
+ *   ok      200 with a parsed body
+ *   miss    400 / 404 / 422 — the job is not there, or we asked in a way this
+ *           endpoint does not accept. Not an outage; try the next step.
+ *   auth    401 / 403 — the API key is missing, wrong, or lacks permission.
+ *           This is a configuration fault and must not be reported as an outage.
+ *   rate    429
+ *   error   5xx, or a body that would not parse
+ *   network the request never completed
+ */
+async function detrackGet(env, path, params) {
+  const url = new URL(API_BASE + path);
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
-  // Otherwise treat it as a phone number and verify ONLY against
-  // Detrack phone_number.
-  return phoneMatches(job, value);
+  let res;
+  try {
+    res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'X-API-KEY': env.DETRACK_API_KEY, Accept: 'application/json' },
+    });
+  } catch {
+    return { kind: 'network', status: 0 };
+  }
+
+  if (res.status === 200) {
+    try {
+      return { kind: 'ok', status: 200, body: await res.json() };
+    } catch {
+      return { kind: 'error', status: 200 };
+    }
+  }
+  if (res.status === 400 || res.status === 404 || res.status === 422) {
+    return { kind: 'miss', status: res.status };
+  }
+  if (res.status === 401 || res.status === 403) return { kind: 'auth', status: res.status };
+  if (res.status === 429) return { kind: 'rate', status: res.status };
+  return { kind: 'error', status: res.status };
 }
 
-function statusLabel(job) {
-  const raw = String(
-    job.tracking_status ||
-    job.status ||
-    job.primary_job_status ||
-    ''
-  ).trim();
+/* ------------------------------------------------------------------- response */
 
-  const key = raw.toLowerCase().replace(/\s+/g, '_');
-
-  const labels = {
-    info_recv: 'Info Received',
-    in_transit: 'In Transit',
-    dispatched: 'In Progress',
-    out_for_delivery: 'Out for Delivery',
-    out_for_collection: 'Out for Collection',
-    head_to_delivery: 'Heading to Delivery',
-    head_to_pick_up: 'Heading to Pick Up',
-    picked_up: 'Picked Up',
-    completed: 'Delivered',
-    completed_partial: 'Partially Delivered',
-    failed: 'Not Delivered',
-    on_hold: 'On Hold',
-    return: 'Return',
-    cancelled: 'Cancelled'
-  };
-
-  return labels[key] || raw || 'Status unavailable';
-}
-
-function milestoneLabel(status) {
-  const key = String(status || '').trim().toLowerCase();
-
-  const labels = {
-    info_recv: 'Delivery information received',
-    in_transit: 'In transit',
-    dispatched: 'In progress',
-    out_for_delivery: 'Out for delivery',
-    out_for_collection: 'Out for collection',
-    head_to_delivery: 'Driver heading to delivery',
-    head_to_pick_up: 'Driver heading to pick up',
-    picked_up: 'Picked up',
-    completed: 'Delivered',
-    completed_partial: 'Partially delivered',
-    failed: 'Delivery attempt unsuccessful',
-    on_hold: 'On hold',
-    return: 'Return'
-  };
-
-  return labels[key] || String(status || 'Update');
-}
-
-function publicJob(job, enteredTrackingNumber) {
+/** Only the fields the recipient needs. Nothing else is passed through. */
+function publicView(job) {
   const photos = [];
-
   for (let i = 1; i <= 10; i++) {
-    const url = job['photo_' + i + '_file_url'];
-    if (url) photos.push(url);
+    const p = job['photo_' + i + '_file_url'];
+    if (p) photos.push(p);
   }
-
-  const milestones = Array.isArray(job.milestones)
-    ? job.milestones.map(m => ({
-        label: milestoneLabel(m.status),
-        at: m.pod_at || m.created_at || null,
-        reason: m.reason || null
-      }))
-    : [];
-
   return {
-    // Existing PWD index.html displays job.do_number as "Tracking No."
-    // Show exactly what the customer entered.
-    do_number: enteredTrackingNumber,
-
-    service: job.service_type || job.job_type || job.type || null,
+    do_number: job.do_number || null,
+    tracking_number: job.tracking_number || null,
+    type: job.type || null,
+    status: job.primary_job_status || job.status || null,
+    date: job.date || null,
+    time_window: [job.time_window_from, job.time_window_to].filter(Boolean).join(' – ') || null,
     deliver_to: job.deliver_to_collect_from || null,
     address: job.address || null,
-
-    status: job.status || job.primary_job_status || null,
-    status_label: statusLabel(job),
-
-    date: job.date || null,
-    time_window:
-      job.destination_time_window ||
-      job.time_window ||
-      (
-        job.time_window_from || job.time_window_to
-          ? [job.time_window_from, job.time_window_to].filter(Boolean).join(' – ')
-          : null
-      ),
-
     received_by: job.received_by_sent_by || null,
-    received_at: job.signed_at || job.pod_at || null,
-    reason: job.reason || job.note || null,
-
+    pod_at: job.pod_at || null,
     signature: job.signature_file_url || null,
     photos,
-    milestones
+    milestones: Array.isArray(job.milestones)
+      ? job.milestones.map((m) => ({
+          status: m.status || null,
+          at: m.created_at || m.assign_time || null,
+          note: m.reason || null,
+        }))
+      : [],
   };
 }
 
-async function readBody(request) {
-  try {
-    const contentType = request.headers.get('content-type') || '';
+/* ----------------------------------------------------------------- parameters */
 
-    if (contentType.includes('application/json')) {
-      return await request.json();
-    }
-
-    const form = await request.formData();
+async function readParams(request) {
+  const url = new URL(request.url);
+  if (request.method === 'GET') {
     return {
-      do_number: form.get('do_number'),
-      identifier: form.get('identifier')
+      do_number: url.searchParams.get('do_number') || url.searchParams.get('tracking'),
+      identifier: url.searchParams.get('identifier'),
+      debug: url.searchParams.get('debug'),
     };
-  } catch {
-    return {};
   }
-}
-
-function extractJobs(payload) {
-  // Detrack V2 official client consumes response.data as the job list.
-  if (payload && Array.isArray(payload.data)) return payload.data;
-
-  // Defensive fallbacks, without trusting them unless exact tracking matches.
-  if (Array.isArray(payload)) return payload;
-  if (payload && Array.isArray(payload.jobs)) return payload.jobs;
-
-  return [];
-}
-
-async function fetchDetrackJobs(apiKey, trackingNumber) {
-  const url = new URL(DETRACK_JOBS_URL);
-
-  // Detrack V2 official client:
-  // GET /jobs?query=<loose search across all attributes>
-  url.searchParams.set('query', trackingNumber);
-  url.searchParams.set('page', '1');
-  url.searchParams.set('limit', '100');
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
-
-  try {
-    return await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': apiKey,
-        'Accept': 'application/json'
-      },
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timer);
+  const ctype = request.headers.get('content-type') || '';
+  if (ctype.includes('application/json')) {
+    try { return await request.json(); } catch { return {}; }
   }
+  const form = await request.formData();
+  return {
+    do_number: form.get('do_number'),
+    identifier: form.get('identifier'),
+    debug: form.get('debug'),
+  };
 }
+
+/* ---------------------------------------------------------------------- entry */
 
 export async function onRequest(context) {
   const { request, env } = context;
 
   if (request.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Allow': 'POST, OPTIONS',
-        'Cache-Control': 'no-store'
-      }
-    });
+    return new Response(null, { status: 204, headers: { Allow: 'GET, POST, OPTIONS' } });
   }
-
-  if (request.method !== 'POST') {
-    return json(
-      { error: 'method_not_allowed', message: 'Method not allowed.' },
-      405
-    );
+  if (request.method !== 'GET' && request.method !== 'POST') {
+    return json({ error: 'method_not_allowed' }, 405);
   }
-
   if (!env.DETRACK_API_KEY) {
-    return json(
-      {
-        error: 'not_configured',
-        message: 'Tracking is not configured yet.'
-      },
-      503
-    );
+    return json({ error: 'not_configured', message: 'Tracking is not configured yet.' }, 503);
   }
 
-  const body = await readBody(request);
+  const { do_number, identifier, debug } = await readParams(request);
+  const ref = String(do_number || '').trim();
+  const who = String(identifier || '').trim();
 
-  // Existing PWD index.html posts the tracking value under "do_number".
-  // We intentionally treat it as a generic tracking value because it may
-  // actually be a Detrack No., Tracking No., or D.O. No.
-  const trackingNumber = String(body.do_number || '').trim();
-  const identifier = String(body.identifier || '').trim();
+  const steps = [];
+  const debugOn = Boolean(env.TRACK_DEBUG_TOKEN) && debug === env.TRACK_DEBUG_TOKEN;
+  const withDebug = (payload) => (debugOn ? { ...payload, _debug: { steps } } : payload);
 
-  // This also makes the existing index.html configuration probe using "!"
-  // stop here without contacting Detrack.
-  if (
-    !trackingNumber ||
-    trackingNumber.length < 3 ||
-    trackingNumber.length > 64 ||
-    !/^[A-Za-z0-9._\-\/]+$/.test(trackingNumber)
-  ) {
+  /** Same reply for "no such shipment" and "wrong identifier", so the endpoint
+   *  cannot be used to confirm that a tracking number exists. */
+  const notFound = () =>
+    json(withDebug({ error: 'not_found', message: 'No shipment matches those details.' }), 404);
+
+  // A plausible reference only; never forward arbitrary input upstream.
+  // Must begin and end alphanumeric, so a path fragment such as "../x" or a
+  // stray leading slash is refused before it costs an upstream call.
+  const REF_OK = /^[A-Za-z0-9](?:[A-Za-z0-9._\-\/]{0,62}[A-Za-z0-9])?$/;
+  if (!ref || !REF_OK.test(ref) || ref.includes('..')) return notFound();
+
+  const requireId =
+    String(env.TRACK_REQUIRE_IDENTIFIER || 'true').toLowerCase() !== 'false';
+  if (requireId && !who) {
     return json(
-      {
-        error: 'not_found',
-        message: 'No shipment matches those details.'
-      },
-      404
-    );
-  }
-
-  if (!identifier) {
-    return json(
-      {
-        error: 'identifier_required',
-        message: 'Enter the email address or phone number on the order.'
-      },
+      withDebug({ error: 'identifier_required',
+                  message: 'Enter the email address or phone number on the order.' }),
       400
     );
   }
 
-  let upstream;
+  // ---------------------------------------------------------------- the lookup
+  let job = null;
+  let worst = null;   // the most serious upstream problem seen along the way
 
-  try {
-    upstream = await fetchDetrackJobs(env.DETRACK_API_KEY, trackingNumber);
-  } catch (err) {
-    const timedOut =
-      err &&
-      (
-        err.name === 'AbortError' ||
-        String(err).toLowerCase().includes('abort')
-      );
+  const note = (name, r, extra) => {
+    steps.push({ step: name, status: r.status, result: r.kind, ...(extra || {}) });
+    // auth beats rate beats error/network; a later success still wins overall
+    const rank = { network: 1, error: 2, rate: 3, auth: 4 };
+    if (rank[r.kind] && (!worst || rank[r.kind] > rank[worst])) worst = r.kind;
+  };
 
-    console.error(
-      timedOut
-        ? 'Detrack tracking request timed out'
-        : 'Detrack tracking request failed'
-    );
-
-    return json(
-      {
-        error: timedOut ? 'upstream_timeout' : 'upstream_unavailable',
-        message: 'Tracking is temporarily unavailable.'
-      },
-      502
-    );
+  // step 1 — exact DO number
+  let r = await detrackGet(env, '/dn/jobs/show/', { do_number: ref });
+  note('show', r);
+  if (r.kind === 'ok' && r.body && r.body.data && !Array.isArray(r.body.data)) {
+    job = r.body.data;
   }
 
-  if (upstream.status === 401 || upstream.status === 403) {
-    console.error('Detrack API rejected credentials:', upstream.status);
-
-    return json(
-      {
-        error: 'detrack_authorization',
-        message: 'Tracking is temporarily unavailable.'
-      },
-      502
-    );
-  }
-
-  if (upstream.status === 429) {
-    return json(
-      {
-        error: 'rate_limited',
-        message: 'Too many tracking lookups. Please try again shortly.'
-      },
-      429
-    );
-  }
-
-  if (!upstream.ok) {
-    console.error('Detrack API returned status:', upstream.status);
-
-    return json(
-      {
-        error: 'upstream_error',
-        message: 'Tracking is temporarily unavailable.'
-      },
-      502
-    );
-  }
-
-  let payload;
-
-  try {
-    payload = await upstream.json();
-  } catch {
-    console.error('Detrack API returned invalid JSON');
-
-    return json(
-      {
-        error: 'upstream_invalid_response',
-        message: 'Tracking is temporarily unavailable.'
-      },
-      502
-    );
-  }
-
-  const jobs = extractJobs(payload);
-
-  // The API search is intentionally broad. Never trust a loose result.
-  // Only continue with a job whose one official tracking identifier exactly
-  // matches what the customer entered.
-  const job = jobs.find(candidate =>
-    trackingNumberMatches(candidate, trackingNumber)
-  );
-
+  // step 2 — the documented query filter (covers tracking_number)
   if (!job) {
-    return json(
-      {
-        error: 'not_found',
-        message: 'No shipment matches those details.'
-      },
-      404
-    );
+    r = await detrackGet(env, '/dn/jobs', { query: ref, limit: MAX_CANDIDATES });
+    const list = r.kind === 'ok' && r.body && Array.isArray(r.body.data) ? r.body.data : [];
+    note('query_reference', r, { candidates: list.length });
+    job = list.find((j) => jobHasReference(j, ref)) || null;
   }
 
-  // Privacy/security check:
-  // Either notify_email OR phone_number must match the job.
-  if (!identifierMatches(job, identifier)) {
-    return json(
-      {
-        error: 'not_found',
-        message: 'No shipment matches those details.'
-      },
-      404
-    );
+  // step 3 — the customer's own jobs, matched locally (the only route to
+  // detrack_number). Requires the second factor to be an email address.
+  if (!job && isEmail(who)) {
+    r = await detrackGet(env, '/dn/jobs', { query: who, limit: MAX_CANDIDATES });
+    const list = r.kind === 'ok' && r.body && Array.isArray(r.body.data) ? r.body.data : [];
+    note('query_email', r, { candidates: list.length });
+    job = list.find((j) => jobHasReference(j, ref)) || null;
   }
 
-  // Existing PWD index.html expects:
-  //   out.status === 200 && out.data.job
-  return json(
-    {
-      job: publicJob(job, trackingNumber)
-    },
-    200
-  );
+  // ------------------------------------------------------------- what happened
+  if (!job) {
+    // Only report a fault if one actually occurred. A clean set of misses means
+    // the shipment genuinely is not there.
+    if (worst === 'auth') {
+      // Configuration, not an outage. Deliberately vague to the visitor; the
+      // real cause is in `_debug` and in the Cloudflare log.
+      console.error('[track] Detrack rejected the API key', JSON.stringify(steps));
+      return json(withDebug({ error: 'not_configured',
+                              message: 'Tracking is not configured yet.' }), 503);
+    }
+    if (worst === 'rate') {
+      return json(withDebug({ error: 'rate_limited',
+                              message: 'Too many lookups. Try again in a moment.' }), 429);
+    }
+    if (worst === 'error' || worst === 'network') {
+      console.error('[track] Detrack unavailable', JSON.stringify(steps));
+      return json(withDebug({ error: 'upstream_unavailable',
+                              message: 'Tracking is temporarily unavailable.' }), 502);
+    }
+    return notFound();
+  }
+
+  if (requireId && !identifierMatches(job, who)) return notFound();
+
+  return json(withDebug({ data: publicView(job) }));
 }
