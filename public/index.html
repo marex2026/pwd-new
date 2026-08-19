@@ -412,6 +412,27 @@
     .sticky-cta .btn{width:100%;justify-content:center}
     body{padding-bottom:70px}
   }
+
+/* ---- layout corrections, mobile and narrow desktop ---------------------
+   1. .hero-in sets `padding:78px 0 84px`. A shorthand, so it overwrote the
+      28px side padding .wrap provides. The home hero therefore ran flush to
+      the screen edge on any viewport under 1140px, and sat 56px wider than
+      every other section on wide ones.
+   2. Grid items default to min-width:auto, so long unbreakable strings
+      (info@premiumwinedelivery.com, "TEXSOM Shipments") forced the two
+      footer tracks wider than the screen - 114px of overflow on a phone.
+   3. Justified text with auto hyphens is fine in a wide column and awful in
+      a 218px one, so it reverts to ragged-right on small screens. */
+.hero-in{padding-left:28px;padding-right:28px}
+.foot-grid>*{min-width:0}
+/* No automatic hyphenation: it was splitting 'com-mercial' and
+   'coordi-nated' across lines. Words stay whole at every width. */
+.foot-about{overflow-wrap:break-word;-webkit-hyphens:manual;hyphens:manual}
+footer a[href^="mailto:"],footer a[href^="tel:"]{overflow-wrap:anywhere}
+@media(max-width:600px){
+  .foot-grid{grid-template-columns:1fr;gap:26px}
+  .foot-about{text-align:left;-webkit-hyphens:manual;hyphens:manual}
+}
 </style>
 <script type="application/ld+json" id="ld-business">{
   "@context": "https://schema.org",
