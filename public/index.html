@@ -395,7 +395,7 @@
   @media(max-width:1040px){
     nav.links a:not(.btn),nav.links button:not(.btn){font-size:13px;padding:8px 5px}
   }
-  @media(max-width:900px){
+  @media(max-width:980px){
     nav.links{display:none}
     .burger{display:block}
     nav.links.open{display:flex;position:absolute;top:72px;left:0;right:0;flex-direction:column;background:var(--cream);padding:14px 20px;gap:2px;border-bottom:1px solid var(--line);box-shadow:0 10px 30px rgba(58,14,26,.12)}
@@ -433,6 +433,23 @@ footer a[href^="mailto:"],footer a[href^="tel:"]{overflow-wrap:anywhere}
   .foot-grid{grid-template-columns:1fr;gap:26px}
   .foot-about{text-align:left;-webkit-hyphens:manual;hyphens:manual}
 }
+
+/* ---- footer contact column, date field, nav breakpoint ------------------
+   4. The contact column was a plain 1fr, narrower than the email address, so
+      "info@premiumwinedelivery.com" broke mid-word. Sizing that one track to
+      its content keeps it on a single line at every width; the other three
+      share whatever is left. break-word (not anywhere) means it will still
+      break rather than overflow if a screen is ever too narrow for it.
+   5. iOS Safari ignores the padding on <input type=date> and renders it much
+      taller than its neighbours. Pinning the height matches the text fields
+      exactly - 45px - in every browser.
+   6. The nav breakpoint moved from 900px to 980px: between roughly 901 and
+      960px the desktop links no longer fitted and pushed the page 79px wide. */
+.foot-grid{grid-template-columns:minmax(0,1.7fr) minmax(0,1fr) minmax(0,1fr) max-content}
+footer a[href^="mailto:"],footer a[href^="tel:"]{overflow-wrap:break-word}
+.fld input[type="date"]{-webkit-appearance:none;appearance:none;display:block;width:100%;height:45px;min-height:45px;max-height:45px;line-height:1.2;padding:12px 14px}
+@media(max-width:980px){.foot-grid{grid-template-columns:minmax(0,1fr) max-content}}
+@media(max-width:600px){.foot-grid{grid-template-columns:1fr}}
 </style>
 <script type="application/ld+json" id="ld-business">{
   "@context": "https://schema.org",
