@@ -450,6 +450,20 @@ footer a[href^="mailto:"],footer a[href^="tel:"]{overflow-wrap:break-word}
 .fld input[type="date"]{-webkit-appearance:none;appearance:none;display:block;width:100%;height:45px;min-height:45px;max-height:45px;line-height:1.2;padding:12px 14px}
 @media(max-width:980px){.foot-grid{grid-template-columns:minmax(0,1fr) max-content}}
 @media(max-width:600px){.foot-grid{grid-template-columns:1fr}}
+
+/* ---- quote form: telling people what is missing -------------------------
+   7. The sticky "Request a Quote" bar was still shown ON the quote page,
+      linking to the page you are already on. On a phone it is the biggest
+      button on screen, so people tapped it instead of the form's own submit
+      and nothing happened at all. Hidden where it is meaningless.
+   8. Invalid fields are outlined and named, because iOS Safari renders no
+      native validation bubble. scroll-margin-top keeps the field we jump to
+      clear of the sticky header. */
+#quoteForm .is-invalid{border-color:#B3462F;background:#FDF6F4}
+#quoteForm .is-invalid:focus{border-color:#B3462F;box-shadow:0 0 0 3px rgba(179,70,47,.18)}
+#quoteForm input,#quoteForm select,#quoteForm textarea{scroll-margin-top:96px}
+body:has(#quote.page.show) .sticky-cta{display:none}
+@media(max-width:980px){body:has(#quote.page.show){padding-bottom:0}}
 </style>
 <script type="application/ld+json" id="ld-business">{
   "@context": "https://schema.org",
@@ -1937,6 +1951,59 @@ footer a[href^="mailto:"],footer a[href^="tel:"]{overflow-wrap:break-word}
   // returns JSON instead of its own thank-you page when asked for it. If fetch
   // is unavailable the browser falls back to the plain POST in the form's
   // action, and _next brings them back to ?sent=1.
+  // iOS Safari does not draw the browser's own "please fill in this field"
+  // bubble, so on a phone an incomplete form looked like a dead button: no
+  // message, no movement, nothing to act on. We report it ourselves instead.
+  function showQuoteErrors(form){
+    var bad = [], seen = {};
+    for (var i = 0; i < form.elements.length; i++) {
+      var el = form.elements[i];
+      if (el.willValidate && !el.checkValidity()) bad.push(el);
+    }
+    if (!bad.length) return;
+
+    var names = [];
+    for (var j = 0; j < bad.length; j++) {
+      bad[j].classList.add('is-invalid');
+      bad[j].setAttribute('aria-invalid', 'true');
+      var n = bad[j].getAttribute('aria-label') || bad[j].name || '';
+      if (n === 'Terms accepted') n = 'the terms checkbox';
+      else if (n) n = n.charAt(0).toUpperCase() + n.slice(1);
+      if (n && !seen[n]) { seen[n] = 1; names.push(n); }
+    }
+    var list = names.slice(0, 6).join(', ');
+    if (names.length > 6) list += ', and ' + (names.length - 6) + ' more';
+    quoteSay(bad.length === 1
+      ? 'One thing is still missing: ' + list + '.'
+      : bad.length + ' required fields are still empty: ' + list + '.', true);
+
+    // move them to the first one, clear of the sticky header
+    var first = bad[0];
+    setTimeout(function(){
+      try { first.focus({preventScroll:true}); } catch (err) { first.focus(); }
+      first.scrollIntoView({behavior:'smooth', block:'center'});
+    }, 60);
+  }
+
+  // clear the marking as soon as a field is put right
+  (function watchQuoteFields(){
+    var form = document.getElementById('quoteForm');
+    if (!form) return;
+    var clear = function(ev){
+      var el = ev.target;
+      if (el && el.classList && el.classList.contains('is-invalid') && el.checkValidity()) {
+        el.classList.remove('is-invalid');
+        el.removeAttribute('aria-invalid');
+        if (form.checkValidity()) {
+          var ok = document.getElementById('formOk');
+          if (ok) ok.style.display = 'none';
+        }
+      }
+    };
+    form.addEventListener('input', clear);
+    form.addEventListener('change', clear);
+  })();
+
   function quoteSay(msg, bad){
     var ok = document.getElementById('formOk');
     if (!ok) return;
@@ -2036,7 +2103,7 @@ footer a[href^="mailto:"],footer a[href^="tel:"]{overflow-wrap:break-word}
     var form = document.getElementById('quoteForm');
     if (!form.checkValidity()) {
       e.preventDefault();
-      form.reportValidity();
+      showQuoteErrors(form);
       return false;
     }
     if (typeof fetch !== 'function' || typeof FormData !== 'function') return true;
