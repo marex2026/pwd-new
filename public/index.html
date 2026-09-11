@@ -36,11 +36,11 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&amp;family=Instrument+Sans:wght@400;600&amp;display=swap">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&amp;family=Instrument+Sans:wght@400;600&amp;display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&amp;family=Instrument+Sans:wght@400;600&amp;display=swap"></noscript>
+<noscript></noscript>
 <style>
   :root{
     --wine:#6A1B2D; --wine-deep:#3A0E1A; --ink:#2A121A;
-    --gold:#8C641C; --gold-soft:#D9B877;
+    --gold:#855D18; --gold-soft:#D9B877;
     --cream:#F8F3EA; --cream-2:#F1E7D6;
     --frost:#3F6470; --frost-soft:#E3EDF0;
     --line:rgba(58,14,26,.14);
@@ -241,6 +241,8 @@
   .form-hint{font-size:13px;color:rgba(42,18,26,.55);margin-top:6px}
   .fld-note{font-size:13px;color:rgba(42,18,26,.6);margin:-6px 0 14px}
   .form-actions{margin-top:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .cf-check{min-height:68px}
+  .cf-check .cf-turnstile{max-width:100%;overflow:hidden}
   .form-consent{font-size:13.5px;color:rgba(42,18,26,.78);max-width:340px}
   #formOk{display:none;background:var(--frost-soft);border:1px solid rgba(63,100,112,.3);border-radius:12px;padding:16px 20px;color:#2f4d57;margin-top:20px;font-size:15px}
   .usd-wrap{position:relative}
@@ -351,6 +353,11 @@
   /* PERFORMANCE + ACCESSIBILITY */
   body{font-synthesis-weight:none}
   section.band,section.cta-band,.trustbar{content-visibility:auto;contain-intrinsic-size:auto 600px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  a.card{text-decoration:none;color:inherit;display:block}
+  a.card h3{color:var(--wine)}
+  .sig{max-width:320px;width:100%;height:auto;aspect-ratio:5/2;object-fit:contain}
+  .pod-imgs img{aspect-ratio:4/3;object-fit:cover}
   .skip{position:absolute;left:-9999px;top:0;z-index:200;background:var(--wine);color:var(--cream);padding:12px 20px;border-radius:0 0 8px 0;font-weight:600}
   .skip:focus{left:0}
   :focus-visible{outline:3px solid var(--gold);outline-offset:3px;border-radius:4px}
@@ -464,6 +471,20 @@ footer a[href^="mailto:"],footer a[href^="tel:"]{overflow-wrap:break-word}
 #quoteForm input,#quoteForm select,#quoteForm textarea{scroll-margin-top:96px}
 body:has(#quote.page.show) .sticky-cta{display:none}
 @media(max-width:980px){body:has(#quote.page.show){padding-bottom:0}}
+
+  @media print{
+    .skip,header,.sticky-cta,.burger,nav,footer,.hero-mark,form,.btn,.track-row{display:none!important}
+    body{background:#fff;color:#000;font-size:11pt}
+    .page{display:none!important}
+    .page.show{display:block!important}
+    .wrap,.hero-in{max-width:none;padding:0}
+    .band,.cream2,.hero,.page-hero{background:#fff!important;color:#000!important;padding:0!important}
+    h1{font-size:20pt}h2{font-size:14pt}h3{font-size:12pt}
+    h1,h2,h3,.card,.answer,.legal-note{page-break-inside:avoid;break-inside:avoid;color:#000!important}
+    .card,.answer,.legal-note{box-shadow:none!important;border:1px solid #ccc!important}
+    a[href^="http"]::after{content:" (" attr(href) ")";font-size:9pt;color:#555}
+    a{color:#000!important;text-decoration:underline}
+  }
 </style>
 <script type="application/ld+json" id="ld-business">{
   "@context": "https://schema.org",
@@ -635,6 +656,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
     "@id": "https://www.premiumwinedelivery.com/#business"
   }
 }</script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -775,12 +797,12 @@ body:has(#quote.page.show) .sticky-cta{display:none}
         <p>One logistics partner for private collections, DtC delivery, commercial wine, auctions, events, and larger freight movements.</p>
       </div>
       <div class="grid-3">
-        <div class="card link" data-go="moving"><span class="ic">&#9826;</span><h3>Collection &amp; Cellar Moving</h3><p>Packing, inventory support, refrigerated transportation, unloading, and cellar placement for private collections.</p><span class="more">Collection moving &rarr;</span></div>
-        <div class="card link" data-go="trade"><span class="ic">&#9679;</span><h3>Texas DtC Delivery</h3><p>Temperature-controlled delivery in Dallas-Fort Worth and Houston with adult signature, tracking, and documented Proof of Delivery.</p><span class="more">Wineries &amp; trade &rarr;</span></div>
-        <div class="card link" data-go="trade"><span class="ic">&#9724;</span><h3>Trade &amp; Pallet Logistics</h3><p>Pallet transportation, consolidation, refrigerated line haul, and logistics support for wineries, importers, distributors, retailers, and fulfillment companies.</p><span class="more">Trade logistics &rarr;</span></div>
-        <div class="card link" data-go="storage"><span class="ic">&#9635;</span><h3>DFW Logistics Hub</h3><p>Receiving, cross-docking, consolidation, pallet handling, repacking, and short-term in-transit holding at our temperature-controlled DFW facility.</p><span class="more">DFW logistics hub &rarr;</span></div>
-        <div class="card link" data-go="auction"><span class="ic">&#9878;</span><h3>Auction &amp; Event Logistics</h3><p>Auction consignments, buyer delivery, and coordinated logistics for winery events, tastings, competitions, trade shows, and industry programs.</p><span class="more">Auction logistics &rarr;</span></div>
-        <div class="card link" data-go="storage"><span class="ic">&#8644;</span><h3>Rail &amp; Intermodal</h3><p>For qualifying high-volume shipments, PWD can coordinate rail-served receiving, intermodal drayage, transloading, cross-docking, and refrigerated onward transportation through vetted logistics partners.</p><span class="more">Rail &amp; intermodal &rarr;</span></div>
+        <a class="card link" data-nav="moving" href="/collection-moving/"><span class="ic">&#9826;</span><h3>Collection &amp; Cellar Moving</h3><p>Packing, inventory support, refrigerated transportation, unloading, and cellar placement for private collections.</p><span class="more">Collection moving &rarr;</span></a>
+        <a class="card link" data-nav="trade" href="/wineries-trade/"><span class="ic">&#9679;</span><h3>Texas DtC Delivery</h3><p>Temperature-controlled delivery in Dallas-Fort Worth and Houston with adult signature, tracking, and documented Proof of Delivery.</p><span class="more">Wineries &amp; trade &rarr;</span></a>
+        <a class="card link" data-nav="trade" href="/wineries-trade/"><span class="ic">&#9724;</span><h3>Trade &amp; Pallet Logistics</h3><p>Pallet transportation, consolidation, refrigerated line haul, and logistics support for wineries, importers, distributors, retailers, and fulfillment companies.</p><span class="more">Trade logistics &rarr;</span></a>
+        <a class="card link" data-nav="storage" href="/dfw-logistics-hub/"><span class="ic">&#9635;</span><h3>DFW Logistics Hub</h3><p>Receiving, cross-docking, consolidation, pallet handling, repacking, and short-term in-transit holding at our temperature-controlled DFW facility.</p><span class="more">DFW logistics hub &rarr;</span></a>
+        <a class="card link" data-nav="auction" href="/wine-auction/"><span class="ic">&#9878;</span><h3>Auction &amp; Event Logistics</h3><p>Auction consignments, buyer delivery, and coordinated logistics for winery events, tastings, competitions, trade shows, and industry programs.</p><span class="more">Auction logistics &rarr;</span></a>
+        <a class="card link" data-nav="storage" href="/dfw-logistics-hub/"><span class="ic">&#8644;</span><h3>Rail &amp; Intermodal</h3><p>For qualifying high-volume shipments, PWD can coordinate rail-served receiving, intermodal drayage, transloading, cross-docking, and refrigerated onward transportation through vetted logistics partners.</p><span class="more">Rail &amp; intermodal &rarr;</span></a>
       </div>
     </div>
   </section>
@@ -833,7 +855,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
     <div class="wrap split">
       <div class="prose">
         <span class="eyebrow">What a move involves</span>
-        <h3 style="margin-top:15px">A collection is not ordinary freight</h3>
+        <h2 style="margin-top:15px">A collection is not ordinary freight</h2>
         <p><strong>Wine is heat-sensitive, fragile, heavy, and often irreplaceable.</strong> A standard moving truck can sit in the sun for hours; a general carrier may cross-dock a shipment several times. Neither is acceptable for a cellar you spent years building.</p>
         <p>We plan the move around the wine: inventory before pickup, wine-specific packing, careful hand loading, temperature-controlled transportation, and as few transfers as possible.</p>
         <p>We also work directly with <strong>moving and relocation companies</strong>, taking only the wine portion of a household or corporate move so the rest of the relocation can proceed normally.</p>
@@ -903,7 +925,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
     <div class="wrap split">
       <div class="prose">
         <span class="eyebrow">DtC Delivery</span>
-        <h3 style="margin-top:15px">From your tasting room to the living room</h3>
+        <h2 style="margin-top:15px">From your tasting room to the living room</h2>
         <p><strong>Shipping is easy.</strong> You provide a shipping manifest, either manually or through our integrated system. After delivery, we send a Proof of Delivery list. Customers receive notifications with a live tracking link. No software installation is required. Our platform can also integrate with your systems through API.</p>
         <p>We extend the winery experience through the final delivery and make summer shipping into Texas practical with refrigerated equipment.</p>
       </div>
@@ -1120,6 +1142,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
 
   <section class="band">
     <div class="wrap">
+      <h2 class="sr-only">Auction and event logistics services</h2>
       <div class="grid-2">
         <div class="card"><span class="ic">&#9878;</span><h3>Collection &amp; Consignment Logistics</h3><p>Pickup, packing, consolidation, and temperature-controlled transportation from private cellars, estates, institutions, and other collection sources to the auction house.</p></div>
         <div class="card"><span class="ic">&#10052;</span><h3>Auction House &amp; Buyer Delivery Logistics</h3><p>Temperature-controlled inbound transportation, receiving coordination, lot movement, and logistics support for wine auction companies, including post-auction pickup and coordinated delivery of sold lots to successful bidders in Texas and other states, subject to destination requirements and applicable alcohol-shipping rules.</p></div>
@@ -1352,23 +1375,23 @@ body:has(#quote.page.show) .sticky-cta{display:none}
       <div class="form-card">
         <p style="font-family:'Fraunces',serif;font-size:24px;color:var(--wine-deep);margin-bottom:2px">Wine Logistics Quote</p>
         <p class="fld-note" style="margin-top:0">Fields marked <span style="color:var(--gold)">*</span> are required.</p>
-        <form id="quoteForm" name="quote" method="POST" action="https://formspree.io/f/mjybeoad" onsubmit="return submitQuote(event)">
+        <form id="quoteForm" name="quote" method="POST" action="/api/quote" onsubmit="return submitQuote(event)">
           <input type="hidden" name="_subject" value="Website quote request - Premium Wine Delivery">
           <input type="hidden" name="_next" value="https://www.premiumwinedelivery.com/request-a-quote/?sent=1">
           <input type="hidden" name="Terms version" value="2026-08-12">
-          <p style="display:none"><label>Leave this empty <input name="_gotcha"></label></p>
+          <p style="display:none"><label>Leave this empty <input name="_gotcha" type="text" tabindex="-1" autocomplete="off" aria-hidden="true"></label></p>
 
           <div class="fld">
             <label for="q_firstname">Name <span class="req">*</span></label>
             <div class="row">
-              <input id="q_firstname" type="text" name="First name" placeholder="First" required>
-              <input id="q_lastname" type="text" name="Last name" placeholder="Last" aria-label="Last name">
+              <input id="q_firstname" type="text" name="First name" placeholder="First" required autocomplete="given-name">
+              <input id="q_lastname" type="text" name="Last name" placeholder="Last" aria-label="Last name" autocomplete="family-name">
             </div>
           </div>
 
           <div class="fld"><div class="row">
-            <div><label for="q_email">Email <span class="req">*</span></label><input id="q_email" type="email" name="email" required></div>
-            <div><label for="q_phone">Phone</label><input id="q_phone" type="tel" name="Phone"></div>
+            <div><label for="q_email">Email <span class="req">*</span></label><input id="q_email" type="email" name="email" required autocomplete="email"></div>
+            <div><label for="q_phone">Phone</label><input id="q_phone" type="tel" name="Phone" autocomplete="tel"></div>
           </div></div>
 
           <div class="fld"><label for="q_service">Service <span class="req">*</span></label><select id="q_service" name="Service" required>
@@ -1383,35 +1406,37 @@ body:has(#quote.page.show) .sticky-cta{display:none}
           </select></div>
 
           <div class="fld"><div class="row">
-            <div><label for="q_timing">Pickup timing <span class="req">*</span></label><select id="q_timing" name="Pickup timing" required>
-              <option value="" selected disabled>Select timing</option><option>1-7 days</option><option>1-2 weeks</option><option>3-4 weeks</option><option>1-2 months</option><option>3+ months</option><option>Not sure yet</option>
+            <div><label for="q_timing">Pickup timing</label><select id="q_timing" name="Pickup timing">
+              <option value="" disabled>Select timing</option><option>1-7 days</option><option>1-2 weeks</option><option>3-4 weeks</option><option>1-2 months</option><option>3+ months</option><option selected>Not sure yet</option>
             </select></div>
             <div><label for="q_date">Preferred date</label><input id="q_date" type="date" name="Preferred date"></div>
           </div></div>
 
           <div class="fld">
-            <label for="q_from_name">Pickup Address <span class="req">*</span></label>
-            <input id="q_from_name" type="text" name="Pickup contact or business" placeholder="Contact, winery, cellar, warehouse, or business" style="margin-bottom:12px">
-            <input type="text" name="Pickup street" placeholder="Street address" required style="margin-bottom:12px" aria-label="Pickup street address">
-            <div class="row" style="margin-bottom:12px"><input type="text" name="Pickup city" placeholder="City" required aria-label="Pickup city"><input type="text" name="Pickup state" placeholder="State / Province" required aria-label="Pickup state or province"></div>
-            <div class="row"><input type="text" name="Pickup ZIP" placeholder="ZIP / Postal Code" required aria-label="Pickup ZIP or postal code"><input type="text" name="Pickup country" placeholder="Country" value="USA" aria-label="Pickup country"></div>
+            <label for="q_from_name">Pickup Address</label>
+            <input id="q_from_name" type="text" name="Pickup contact or business" placeholder="Contact, winery, cellar, warehouse, or business" style="margin-bottom:12px" autocomplete="section-pickup organization">
+            <input type="text" name="Pickup street" placeholder="Street address" style="margin-bottom:12px" aria-label="Pickup street address" autocomplete="section-pickup address-line1">
+            <div class="row" style="margin-bottom:12px"><input type="text" name="Pickup city" placeholder="City" aria-label="Pickup city" autocomplete="section-pickup address-level2"><input type="text" name="Pickup state" placeholder="State / Province" aria-label="Pickup state or province" autocomplete="section-pickup address-level1"></div>
+            <div class="row"><input type="text" name="Pickup ZIP" placeholder="ZIP / Postal Code *" required aria-label="Pickup ZIP or postal code" autocomplete="section-pickup postal-code"><input type="text" name="Pickup country" placeholder="Country" value="USA" aria-label="Pickup country" autocomplete="section-pickup country-name"></div>
+            <p class="form-hint">Only the ZIP is required. Approximate is fine &mdash; we just need the route to price it.</p>
           </div>
 
           <div class="fld">
-            <label for="q_deliv_name">Delivery Address <span class="req">*</span></label>
-            <input id="q_deliv_name" type="text" name="Delivery contact or business" placeholder="Contact, residence, cellar, warehouse, or business" style="margin-bottom:12px">
-            <input type="text" name="Delivery street" placeholder="Street address" required style="margin-bottom:12px" aria-label="Delivery street address">
-            <div class="row" style="margin-bottom:12px"><input type="text" name="Delivery city" placeholder="City" required aria-label="Delivery city"><input type="text" name="Delivery state" placeholder="State / Province" required aria-label="Delivery state or province"></div>
-            <div class="row"><input type="text" name="Delivery ZIP" placeholder="ZIP / Postal Code" required aria-label="Delivery ZIP or postal code"><input type="text" name="Delivery country" placeholder="Country" value="USA" aria-label="Delivery country"></div>
+            <label for="q_deliv_name">Delivery Address</label>
+            <input id="q_deliv_name" type="text" name="Delivery contact or business" placeholder="Contact, residence, cellar, warehouse, or business" style="margin-bottom:12px" autocomplete="section-delivery organization">
+            <input type="text" name="Delivery street" placeholder="Street address" style="margin-bottom:12px" aria-label="Delivery street address" autocomplete="section-delivery address-line1">
+            <div class="row" style="margin-bottom:12px"><input type="text" name="Delivery city" placeholder="City" aria-label="Delivery city" autocomplete="section-delivery address-level2"><input type="text" name="Delivery state" placeholder="State / Province" aria-label="Delivery state or province" autocomplete="section-delivery address-level1"></div>
+            <div class="row"><input type="text" name="Delivery ZIP" placeholder="ZIP / Postal Code *" required aria-label="Delivery ZIP or postal code" autocomplete="section-delivery postal-code"><input type="text" name="Delivery country" placeholder="Country" value="USA" aria-label="Delivery country" autocomplete="section-delivery country-name"></div>
+            <p class="form-hint">Only the ZIP is required. If the destination is not settled yet, give the town you expect.</p>
           </div>
 
           <div class="fld"><div class="row">
-            <div><label for="q_qty">Approximate Quantity <span class="req">*</span></label><input id="q_qty" type="number" name="Quantity" min="1" required></div>
-            <div><label for="q_unit">Unit <span class="req">*</span></label><select id="q_unit" name="Unit" required><option>Cases</option><option>Bottles</option><option>Pallets</option><option>Full collection</option><option>Not sure</option></select></div>
+            <div><label for="q_qty">Approximate Quantity</label><input id="q_qty" type="number" name="Quantity" min="1"></div>
+            <div><label for="q_unit">Unit</label><select id="q_unit" name="Unit"><option>Cases</option><option>Bottles</option><option>Pallets</option><option>Full collection</option><option>Not sure</option></select></div>
           </div></div>
 
           <div class="fld"><div class="row">
-            <div><label for="q_packed">Packing <span class="req">*</span></label><select id="q_packed" name="Packing" required><option value="" selected disabled>Select packing</option><option>Original cases / OWC</option><option>Wine shippers</option><option>Palletized</option><option>Needs packing</option><option>Mixed / not sure</option></select></div>
+            <div><label for="q_packed">Packing</label><select id="q_packed" name="Packing"><option value="" selected disabled>Select packing</option><option>Original cases / OWC</option><option>Wine shippers</option><option>Palletized</option><option>Needs packing</option><option>Mixed / not sure</option></select></div>
             <div><label for="q_dock">Pickup dock or forklift</label><select id="q_dock" name="Dock or forklift"><option>Not sure</option><option>Yes</option><option>No</option></select></div>
           </div></div>
 
@@ -1435,6 +1460,10 @@ body:has(#quote.page.show) .sticky-cta{display:none}
           <div class="fld">
             <label class="opt" for="q_terms"><input id="q_terms" type="checkbox" name="Terms accepted" value="Yes" required> I have read and agree to the Terms &amp; Conditions.</label>
             <p class="form-hint"><a href="/terms/" data-nav="terms" style="color:var(--wine);font-weight:600;text-decoration:underline">Read Terms &amp; Conditions</a></p>
+          </div>
+
+          <div class="fld cf-check">
+            <div class="cf-turnstile" data-sitekey="0x4AAAAAAEwuQuy5u-Yll1Bh" data-theme="light" data-size="flexible"></div>
           </div>
 
           <div class="form-actions"><button type="submit" class="btn btn-gold">Request My Quote &rarr;</button><p class="form-consent">Wine deliveries require an adult recipient age 21+ with valid government-issued ID, who must be present and sober to sign.</p></div>
@@ -1865,7 +1894,10 @@ body:has(#quote.page.show) .sticky-cta{display:none}
   // Ask the function once on load whether it is configured, so the customer
   // sees a working tracker immediately rather than after a failed search.
   // '!' fails validation server-side, so no Detrack call is ever made.
-  (function trackProbe(){
+  var trackProbed = false;
+  function trackProbe(){
+    if (trackProbed) return;
+    trackProbed = true;
     if (!document.getElementById('trackForm')) return;
     // check the protocol directly: this runs before the IS_LOCAL_PREVIEW
     // assignment further down, so the variable would still be undefined here
@@ -1880,7 +1912,14 @@ body:has(#quote.page.show) .sticky-cta{display:none}
     }).catch(function(){
       trackFallbackShow();
     });
-  })();
+  }
+  // Only probe when the customer is actually on the tracking page, either as
+  // the landing URL or after navigating to it. This previously fired on every
+  // page view of every route and logged a 404 each time.
+  if (location.pathname === '/tracking/') trackProbe();
+  document.addEventListener('click', function(e){
+    if (e.target.closest && e.target.closest('a[data-nav="tracking"]')) trackProbe();
+  });
 
   var IS_LOCAL_PREVIEW = (location.protocol === 'file:');
 
@@ -2156,12 +2195,22 @@ body:has(#quote.page.show) .sticky-cta{display:none}
     // one formatted field instead of thirty, so the notification email is a
     // single readable page with no empty boxes
     var name = [qf(form,'First name'), qf(form,'Last name')].filter(Boolean).join(' ');
-    var data = new FormData();
-    data.append('_subject', 'Quote request - ' + (name || qf(form,'email')));
-    data.append('email', qf(form,'email'));
-    data.append('message', quoteSummary(form));
+    var data = {
+      _subject: 'Quote request - ' + (name || qf(form,'email')),
+      email: qf(form,'email'),
+      message: quoteSummary(form)
+    };
     var trap = qf(form,'_gotcha');
-    if (trap) data.append('_gotcha', trap);
+    if (trap) data._gotcha = trap;
+
+    // Turnstile writes its token into a hidden input it injects itself.
+    var tsEl = form.querySelector('[name="cf-turnstile-response"]');
+    var tsToken = tsEl ? tsEl.value : '';
+    if (window.turnstile && !tsToken) {
+      quoteSay('Please wait a moment for the verification check to finish, then send again.', true);
+      return false;
+    }
+    data['cf-turnstile-response'] = tsToken;
 
     var btn = form.querySelector('button[type=submit], .btn-gold');
     var label = btn ? btn.textContent : '';
@@ -2169,8 +2218,8 @@ body:has(#quote.page.show) .sticky-cta{display:none}
 
     fetch(form.getAttribute('action'), {
       method: 'POST',
-      body: data,
-      headers: { 'Accept': 'application/json' }
+      body: JSON.stringify(data),
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
     }).then(function(r){
       if (r.ok) {
         form.reset();
@@ -2196,6 +2245,8 @@ body:has(#quote.page.show) .sticky-cta{display:none}
                'info@premiumwinedelivery.com and we will pick it up.', true);
     }).then(function(){
       if (btn) { btn.disabled = false; btn.textContent = label; }
+      // a token is single-use: hand the customer a fresh one for any retry
+      if (window.turnstile) { try { window.turnstile.reset(); } catch (err) {} }
     });
 
     return false;
