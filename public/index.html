@@ -825,7 +825,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
   </section>
 
   <section class="band">
-    <div class="wrap" style="text-align:center">
+    <div class="wrap">
       <div class="sec-head"><span class="eyebrow">Common questions</span><h2>Wine transportation, answered</h2>
       <p>Temperature control through the Texas summer, interstate coordination, permits, and cargo coverage &mdash; the questions we are asked most.</p></div>
       <a class="btn btn-ghost" href="/faq/" data-nav="faq">Read the FAQ &rarr;</a>
@@ -1343,7 +1343,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
   </section>
 
   <section class="band">
-    <div class="wrap" style="text-align:center">
+    <div class="wrap">
       <div class="sec-head"><span class="eyebrow">Common questions</span><h2>Questions about moving wine?</h2>
       <p>Summer heat, interstate coordination, permits, and cargo coverage &mdash; answered in one place.</p></div>
       <a class="btn btn-ghost" href="/faq/" data-nav="faq">Read the FAQ &rarr;</a>
@@ -1391,7 +1391,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
 
           <div class="fld"><div class="row">
             <div><label for="q_email">Email <span class="req">*</span></label><input id="q_email" type="email" name="email" required autocomplete="email"></div>
-            <div><label for="q_phone">Phone</label><input id="q_phone" type="tel" name="Phone" autocomplete="tel"></div>
+            <div><label for="q_phone">Phone <span class="req">*</span></label><input id="q_phone" type="tel" name="Phone" autocomplete="tel" required></div>
           </div></div>
 
           <div class="fld"><label for="q_service">Service <span class="req">*</span></label><select id="q_service" name="Service" required>
@@ -1463,7 +1463,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
           </div>
 
           <div class="fld cf-check">
-            <div class="cf-turnstile" data-sitekey="0x4AAAAAAEwuQuy5u-Yll1Bh" data-theme="light" data-size="flexible"></div>
+            <div class="cf-turnstile" data-sitekey="0x4AAAAAAEwuQuy5u-Yll1Bh" data-theme="light" data-size="flexible" data-retry="auto" data-retry-interval="3000" data-error-callback="onTurnstileProblem" data-timeout-callback="onTurnstileProblem"></div>
           </div>
 
           <div class="form-actions"><button type="submit" class="btn btn-gold">Request My Quote &rarr;</button><p class="form-consent">Wine deliveries require an adult recipient age 21+ with valid government-issued ID, who must be present and sober to sign.</p></div>
@@ -1494,7 +1494,7 @@ body:has(#quote.page.show) .sticky-cta{display:none}
   </section>
 
   <section class="band cream2">
-    <div class="wrap" style="text-align:center">
+    <div class="wrap">
       <div class="sec-head"><span class="eyebrow">Still deciding</span><h2>Ask us about your shipment</h2>
       <p>Tell us what is moving, from where, and when. We will come back with options and a price.</p></div>
       <a class="btn btn-gold" href="/request-a-quote/" data-nav="quote">Request a Quote &rarr;</a>
@@ -2181,6 +2181,40 @@ body:has(#quote.page.show) .sticky-cta{display:none}
     return L.join('\n');
   }
 
+  // ---- Turnstile health + email fallback ------------------------------
+  var TURNSTILE_BROKEN = false;
+  window.onTurnstileProblem = function(){ TURNSTILE_BROKEN = true; };
+  // If the script itself never arrives, treat that the same way.
+  setTimeout(function(){ if (typeof window.turnstile === 'undefined') TURNSTILE_BROKEN = true; }, 12000);
+
+  function offerEmailFallback(form){
+    var body = quoteSummary(form);
+    var subject = 'Quote request - ' +
+      ([qf(form,'First name'), qf(form,'Last name')].filter(Boolean).join(' ') || qf(form,'email'));
+    var href = 'mailto:info@premiumwinedelivery.com?subject=' +
+      encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    var ok = document.getElementById('formOk');
+    if (!ok) { window.location.href = href; return; }
+    ok.innerHTML = '';
+    var p = document.createElement('p');
+    p.style.margin = '0 0 10px';
+    p.textContent = 'The spam check could not load - this is usually an ad blocker or a ' +
+      'restricted network. Your details are not lost: send them to us by email instead.';
+    var a = document.createElement('a');
+    a.href = href;
+    a.textContent = 'Email this quote request \u2192';
+    a.style.cssText = 'font-weight:700;text-decoration:underline;color:#7A2F1E';
+    var q = document.createElement('p');
+    q.style.cssText = 'margin:10px 0 0;font-size:14px';
+    q.textContent = 'Or call (214) 560-2501 and we will take the details directly.';
+    ok.appendChild(p); ok.appendChild(a); ok.appendChild(q);
+    ok.style.background = '#F6E9E6';
+    ok.style.borderColor = 'rgba(150,60,40,.35)';
+    ok.style.color = '#7A2F1E';
+    ok.style.display = 'block';
+    ok.scrollIntoView({behavior:'smooth', block:'center'});
+  }
+
   function submitQuote(e){
     var form = document.getElementById('quoteForm');
     if (!form.checkValidity()) {
@@ -2206,7 +2240,13 @@ body:has(#quote.page.show) .sticky-cta{display:none}
     // Turnstile writes its token into a hidden input it injects itself.
     var tsEl = form.querySelector('[name="cf-turnstile-response"]');
     var tsToken = tsEl ? tsEl.value : '';
-    if (window.turnstile && !tsToken) {
+
+    if (!tsToken) {
+      // The spam check could not run - an ad blocker, a corporate network, a
+      // VPN, or Cloudflare having a bad minute. Never dead-end the customer:
+      // hand them a pre-filled email so the enquiry still reaches us.
+      if (TURNSTILE_BROKEN) { offerEmailFallback(form); return false; }
+      // Still working on it: ask them to try again in a second.
       quoteSay('Please wait a moment for the verification check to finish, then send again.', true);
       return false;
     }
