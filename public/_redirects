@@ -9,6 +9,15 @@
 /press/*                   /about/                301
 /home                      /                      301
 
+/solutions                 /wineries-trade/       301
+/pricing                   /request-a-quote/      301
+/howitworks                /                      301
+/contact-1                 /request-a-quote/      301
+/press                     /about/                301
+/storage-logistics         /dfw-logistics-hub/    301
+/warehousing-logistics     /dfw-logistics-hub/    301
+/service-area              /#service-areas        301
+
 # --- paths that changed between drafts ------------------------------------
 /storage-logistics/*       /dfw-logistics-hub/    301
 /warehousing-logistics/*   /dfw-logistics-hub/    301
