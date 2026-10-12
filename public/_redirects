@@ -1,20 +1,45 @@
-# Read top to bottom, first match wins. The catch-all MUST stay last.
+# Read top to bottom, first match wins.
+# Real files (/assets/*, /favicon.ico, ...) are served before any rule below.
 
 # --- old Squarespace URLs -------------------------------------------------
-/solutions/*            /wineries-trade/      301
-/pricing/*              /request-a-quote/     301
-/howitworks/*           /                     301
-/contact-1/*            /request-a-quote/     301
-/press/*                /about/               301
+/solutions/*               /wineries-trade/       301
+/pricing/*                 /request-a-quote/      301
+/howitworks/*              /                      301
+/contact-1/*               /request-a-quote/      301
+/press/*                   /about/                301
+/home                      /                      301
 
 # --- paths that changed between drafts ------------------------------------
-/storage-logistics/*       /dfw-logistics-hub/   301
-/warehousing-logistics/*   /dfw-logistics-hub/   301
-/service-area/*            /#service-areas       301
+/storage-logistics/*       /dfw-logistics-hub/    301
+/warehousing-logistics/*   /dfw-logistics-hub/    301
+/service-area/*            /#service-areas        301
+
+# --- missing trailing slash: send to the canonical URL --------------------
+/collection-moving         /collection-moving/    301
+/wineries-trade            /wineries-trade/       301
+/dfw-logistics-hub         /dfw-logistics-hub/    301
+/tracking                  /tracking/             301
+/wine-auction              /wine-auction/         301
+/texsom                    /texsom/               301
+/about                     /about/                301
+/request-a-quote           /request-a-quote/      301
+/faq                       /faq/                  301
+/terms                     /terms/                301
+/privacy                   /privacy/              301
 
 # --- old tracking endpoint, kept for cached pages -------------------------
-/.netlify/functions/track   /api/track   200
+/.netlify/functions/track  /api/track             200
 
-# --- single-page app: every route is rendered by index.html ---------------
-# real files and /api/* are matched before this line
-/*   /index.html   200
+# --- the twelve real routes, each rendered by index.html ------------------
+/                          /index.html            200
+/collection-moving/        /index.html            200
+/wineries-trade/           /index.html            200
+/dfw-logistics-hub/        /index.html            200
+/tracking/                 /index.html            200
+/wine-auction/             /index.html            200
+/texsom/                   /index.html            200
+/about/                    /index.html            200
+/request-a-quote/          /index.html            200
+/faq/                      /index.html            200
+/terms/                    /index.html            200
+/privacy/                  /index.html            200
