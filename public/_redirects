@@ -30,16 +30,3 @@
 # --- old tracking endpoint, kept for cached pages -------------------------
 /.netlify/functions/track  /api/track             200
 
-# --- the twelve real routes, each rendered by index.html ------------------
-/                          /index.html            200
-/collection-moving/        /index.html            200
-/wineries-trade/           /index.html            200
-/dfw-logistics-hub/        /index.html            200
-/tracking/                 /index.html            200
-/wine-auction/             /index.html            200
-/texsom/                   /index.html            200
-/about/                    /index.html            200
-/request-a-quote/          /index.html            200
-/faq/                      /index.html            200
-/terms/                    /index.html            200
-/privacy/                  /index.html            200
